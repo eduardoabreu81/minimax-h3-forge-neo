@@ -26,15 +26,21 @@ Automatic memory usage reserves 2 GiB of currently free VRAM. Economical reserve
 
 ## Install on Forge Neo
 
-1. Extract the entire `minimax-h3-forge-neo` directory into `<Forge>/extensions/minimax-h3-forge-neo`. Keep `forge_h3`, `scripts` and `tools` together.
-2. Activate the same Python environment used by Forge. Prepare the runtime using the commands below. The first command plans installation; the second installs. Current Forge versions of Torch, Transformers, Gradio and other core packages are constrained to prevent an upgrade.
+1. Install through Forge's **Extensions → Install from URL**, or extract the entire `minimax-h3-forge-neo` directory into `<Forge>/extensions/minimax-h3-forge-neo`. Keep `install.py`, `forge_h3`, `scripts` and `tools` together.
+2. Restart Forge normally. Its native extension installer runs `install.py`, which prepares the pinned **INT8** runtime in Forge's own Python environment. It checks metadata first and skips package installation when the pinned revision and required packages are present. A new setup needs internet access, resolves the package plan before installing, constrains existing core versions and then performs a weight-free CPU runtime check. Model weights and processor assets are not downloaded automatically.
+
+If Forge is launched with `--skip-install` or environment preparation is skipped, its extension installer will not run. Use a normal launch to complete setup, or use the manual fallback below. Incompatible existing Torch/Torchaudio builds or dependency conflicts stop H3 setup and produce diagnostics; the installer does not replace Forge's core packages to force compatibility.
+
+### Manual fallback and diagnostics
+
+Activate the same Python environment used by Forge. The first command below plans installation; the second installs. Existing versions of Torch, Transformers, Gradio and other core packages are constrained to prevent an upgrade. The explicit tools remain useful for troubleshooting or preparing an environment with startup installation disabled.
 
 ```bash
 python extensions/minimax-h3-forge-neo/tools/prepare_runtime.py --quant int8
 python extensions/minimax-h3-forge-neo/tools/prepare_runtime.py --quant int8 --install
 ```
 
-Use `--quant plain`, `--quant fp8` or `--quant nf4` for the corresponding files. `--check-only` prints the plan offline. There is deliberately no startup installer: installing this extension alone does not change Forge's environment.
+Use `--quant plain`, `--quant fp8` or `--quant nf4` when explicitly preparing the corresponding path; those variants still need their own GPU validation. Automatic setup prepares the tested INT8 dependencies. `--check-only` prints the plan offline.
 
 DiffSynth imports Torchaudio even for generated audio. The preparation tool keeps an existing Torchaudio version, or requests the version matching Forge's Torch and uses PyTorch's matching CUDA wheel index when that build suffix is available. Torch itself stays constrained. Keep the dependency-resolution output if the pod image uses a nonstandard build.
 

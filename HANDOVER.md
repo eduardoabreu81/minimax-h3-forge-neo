@@ -1,6 +1,6 @@
 # MiniMax H3 for Forge Neo: handover
 
-Updated: 2026-10-02, America/Sao_Paulo. Public preview: 0.1.2. The current delivery is a working, experimental standard INT8 T2V/audio extension. This roadmap describes future work; it does not authorize new paid resources.
+Updated: 2026-10-03, America/Sao_Paulo. Public preview: 0.1.2. The current delivery is a working, experimental standard INT8 T2V/audio extension. Automatic dependency installation was added after the three recorded GPU runs; it is covered locally, with a fresh normal-launch installation on Runpod still pending. This roadmap describes future work; it does not authorize new paid resources.
 
 ## Decisions to preserve
 
@@ -9,7 +9,7 @@ Updated: 2026-10-02, America/Sao_Paulo. Public preview: 0.1.2. The current deliv
 - **Frames is video length; Steps remains denoising.** Reuse Batch Size as Frames, with the 17n+5 grid and duration at 24 FPS. Avoid a competing editable duration field.
 - Community models remain selectable, but support depends on actual architecture, tensor layout and quantization capabilities. A Civitai title or filename is not proof.
 - Reject unsupported combinations clearly instead of silently ignoring features.
-- Keep setup explicit and preserve Forge's core dependencies. No startup Torch, Gradio or Transformers upgrades.
+- Use Forge's native extension installer for the pinned runtime and preserve core dependencies. No startup Torch, Gradio or Transformers upgrades. Keep the manual setup tools for diagnostics.
 
 ## Verified baseline
 
@@ -17,7 +17,7 @@ A lazy, extension-owned DiffSynth pipeline runs in Forge's Python process. Rever
 
 | Evidence | Result |
 | --- | --- |
-| CPU validation | 52 tests passed with the real pinned runtime and original processor assets in the development session |
+| CPU validation | 61 tests passed with the real pinned runtime and original processor assets, including nine installer tests added on 2026-10-03 |
 | Real UI callbacks | txt2img/img2img panels activate; components resolve; Frames and Steps remain separate |
 | Bird T2V/audio | 640x384, 22 frames, 20 steps, seed 123; 312.3 s |
 | Cinematic T2V/audio | Native 576x1024/362 frames, 32 steps, seed 20261002; 4772.2 s; delivered 15 s |
@@ -48,6 +48,7 @@ The dedicated test Pod was stopped and permanently deleted after its evidence ar
 | `forge_h3/backend.py` | Runtime execution, memory policy, progress and cleanup |
 | `forge_h3/media.py` | Video/audio export and metadata |
 | `tools/prepare_runtime.py` | Explicit setup with protected Forge versions |
+| `install.py` | Native Forge startup setup; skips an installed pinned runtime and performs a CPU check after installation |
 | `tools/check_runtime.py`, `diagnose.py` | Offline runtime/processor and local model checks |
 | `tests/` | CPU contracts, Forge harness, UI lifecycle and media checks |
 
@@ -65,6 +66,7 @@ Start locally, then use a short, explicitly authorized GPU session following [RU
 - Real cancellation between steps, cleanup, then another successful short request.
 - Ordinary model generation after H3; switching to/from Wan; native controls, loader and memory recovery.
 - Browser smoke of actual controls/player in addition to callback automation.
+- Fresh normal-launch automatic dependency installation with the pinned Forge environment; prior GPU tests prepared dependencies manually. Verify the setup log and a short T2V/audio afterward.
 - Full playback review: narrative fidelity, motion/identity consistency, sound quality and synchronization. Decode success is a separate result.
 
 Exit criterion: concrete artifacts and measured outcomes for each claimed mode. Reproduce failures before targeted fixes; update public support claims after evidence exists.
@@ -129,4 +131,4 @@ Keep upgrades, new architectures and UI changes scoped. Preserve current T2V/aud
 
 Virtual environments and large dependency caches stay in the original workspace; the local session log records their locations. This repository is now the canonical source. Historical packaging helpers target the old output tree and must be adapted before reuse.
 
-Public files contain code, English documentation, portable benchmarks, the owner's prompts and two examples. Credentials, keys, account endpoints, raw configuration and supplied workflow archives remain local. This publication does not create a GitHub release/tag or further GPU resources.
+Public files contain code, English documentation, portable benchmarks, the owner's prompts and three examples, including the first bird smoke test. The [user wiki](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki) contains usage guidance, measured examples and the public roadmap. Its separate Git checkout is `../minimax-h3-forge-neo-wiki`; update the wiki and repository documentation together when verified capabilities change. Credentials, keys, account endpoints, raw configuration and supplied workflow archives remain local. This publication does not create a GitHub release/tag or further GPU resources.

@@ -24,6 +24,7 @@ Generate **videos with sound** inside Forge Neo, using the checkpoint selectors,
 - [What's New](#whats-new)
 - [Features](#features)
 - [Examples](#examples)
+- [Wiki](#wiki)
 - [Installation](#installation)
 - [Settings](#settings)
 - [Tips](#tips)
@@ -37,6 +38,7 @@ Generate **videos with sound** inside Forge Neo, using the checkpoint selectors,
 ### v0.1.2 - First Public Preview
 
 - **Text-to-video with sound** through Forge's existing Generate action.
+- **Automatic runtime setup** through Forge's extension installer, with core package versions protected.
 - **Native controls** for prompt, models, resolution, seed, CFG and Steps.
 - **Frames control** in place of Batch Size while H3 video output is selected.
 - **Automatic and Economical memory options** in the H3 panel.
@@ -80,20 +82,19 @@ All clips use **24 FPS and stereo audio**. The longer examples were trimmed for 
 
 Video generation is still demanding. These are measured examples, with loading, generation and native export included in the times, rather than speed guarantees. Full prompts, settings, model hashes and environment details are in the [benchmarks](docs/BENCHMARKS.md) and the [six-second test](docs/LAUNDROMAT_6S_BENCHMARK.md).
 
+The [first bird clip with audio](.github/media/bird-smoke-test.mp4) is also available: 640×384, 22 frames and about 0.92 seconds. It was a short installation check, rather than a finished showcase. See its [wiki page](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Bird-Smoke-Test) for the prompt and exact settings.
+
+## Wiki
+
+Visit the [user wiki](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki) for [getting started](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Getting-Started), [examples and measured times](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Examples-and-Benchmarks), and the [roadmap](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Roadmap).
+
 ## Installation
 
-This preview needs a one-time runtime setup and local model files. It was tested with Forge Neo revision `97b26fb`.
+This preview installs its runtime dependencies automatically and needs local model files. Generation was tested with Forge Neo revision `97b26fb`.
 
 1. Open Forge Neo and go to **Extensions → Install from URL**.
 2. Paste `https://github.com/eduardoabreu81/minimax-h3-forge-neo`, click **Install**, then restart the WebUI.
-3. With the **Python environment used by Forge**, prepare and check the runtime:
-
-   ```bash
-   python extensions/minimax-h3-forge-neo/tools/prepare_runtime.py --quant int8 --install
-   python extensions/minimax-h3-forge-neo/tools/check_runtime.py --quant int8
-   ```
-
-   Require `runtime_ready: true`. Setup keeps Forge's existing core package versions. The tested GPU environment uses matching Torch/Torchaudio 2.8 CUDA 12.8 builds; other environments may need compatibility adjustments. See the [detailed setup guide](docs/INSTALLATION.md) before downloading the large models.
+3. Allow the first startup to finish installing the H3 dependencies. This uses Forge's Python environment, needs internet access and preserves its core package versions. Later startups skip installation when the required packages are present. If setup reports an incompatibility, use the [setup and troubleshooting guide](docs/INSTALLATION.md#install-on-forge-neo) before downloading the large models.
 
 4. Place the following tested files in Forge's model folders:
 
@@ -173,4 +174,10 @@ AGPL-3.0. See [LICENSE](LICENSE). Model weights and runtime dependencies retain 
 
 ---
 
-[Report Bug](https://github.com/eduardoabreu81/minimax-h3-forge-neo/issues) · [Request Feature](https://github.com/eduardoabreu81/minimax-h3-forge-neo/issues) · [☕ Ko-fi](https://ko-fi.com/eduardoabreu81)
+<div align="center">
+
+Made with ❤️ for the Stable Diffusion community
+
+**[Report Bug](https://github.com/eduardoabreu81/minimax-h3-forge-neo/issues)** • **[Request Feature](https://github.com/eduardoabreu81/minimax-h3-forge-neo/issues)** • **[☕ Ko-fi](https://ko-fi.com/eduardoabreu81)**
+
+</div>

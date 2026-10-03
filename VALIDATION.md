@@ -1,10 +1,10 @@
 # Validation: 0.1.2
 
-Validation date: 2026-10-02 (America/Sao_Paulo). Local CPU validation, a separate authorized A40 Runpod preflight and three successful H3 video/audio generations through Forge's authenticated generation callback are recorded below.
+Generation validation date: 2026-10-02 (America/Sao_Paulo). Installer follow-up: 2026-10-03. Local CPU validation, a separate authorized A40 Runpod preflight and three successful H3 video/audio generations through Forge's authenticated generation callback are recorded below.
 
 ## Completed locally
 
-- 52 automated tests pass without skips in an isolated Windows Python 3.13.15 environment with the real pinned DiffSynth runtime and local original processor assets. A separate light Python 3.12 environment also passes the suite with three optional real-runtime/tensor/processor checks skipped.
+- The latest full local run passes 61 automated tests without skips in an isolated Windows Python 3.13.15 environment with the real pinned DiffSynth runtime and local original processor assets. Before the installer follow-up, all 52 original tests passed there; the original suite also passed in a light Python 3.12 environment with three optional real-runtime/tensor/processor checks skipped.
 - The Gradio test verifies both txt2img and img2img panels, Video/Still image visibility, native Frames and restoration from H3 to ordinary models and Wan. The native preset selector is temporarily disabled while an H3 checkpoint is active.
 - A regression test reproduces Forge's actual UI lifecycle: generation interfaces and `ui_tabs` precede the outer model selectors. Panels now finish binding when those selectors arrive; repeated capture does not duplicate events. Missing controls are reported only after app startup.
 - A lightweight Forge host harness exercises native processing routing, Processed/video_path results, img2img first-frame forwarding, metadata sidecars and reversible hooks. It also verifies that selected generation scripts fail before their original run method can bypass H3 routing.
@@ -18,6 +18,12 @@ Validation date: 2026-10-02 (America/Sao_Paulo). Local CPU validation, a separat
 - Ruff code checks and Python bytecode compilation pass.
 
 The real runtime environment has Torch 2.8.0+cpu, Torchvision 0.23.0+cpu, Torchaudio 2.8.0+cpu, DiffSynth 2.1.8 at the pinned revision, Transformers 4.57.6, Comfy Kitchen 0.2.36, NumPy 2.3.5, Gradio 4.40.0, Hugging Face Hub 0.36.2, Pydantic 2.10.6, FastAPI 0.127.1 and Safetensors 0.8.0. Python 3.13 includes audioop-lts for the pinned Gradio version. No inference was performed. The portable runtime-check result is in `docs/LOCAL_RUNTIME.json`.
+
+## Automatic dependency setup follow-up
+
+On 2026-10-03, Forge's native `install.py` entry point was added. The full 61-test suite, Ruff and compilation passed. The real entry point ran against the existing pinned local runtime and correctly skipped package installation. Nine new tests cover metadata readiness, wrong revisions, missing dependencies, quantization-package versions, optional extras, incompatible Torch/Torchaudio versions, dependency-resolution failure, unsafe core-package changes and the install-then-CPU-check flow.
+
+Installer tests exercise real preparation logic with controlled package metadata and substitute only external package-manager/check subprocesses. They do not download packages or weights. A fresh normal Forge startup, actual automatic downloads and a GPU generation in that newly prepared environment have not yet been tested together. The three recorded GPU runs prepared dependencies explicitly before startup; their generation path is unchanged.
 
 ## Dependency compatibility found locally
 
