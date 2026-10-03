@@ -1,0 +1,274 @@
+[
+  {
+    "elapsed_seconds": 106.6,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 0/32 steps",
+    "progress": 0.0,
+    "eta": null,
+    "gpu": "925 MiB, 0 %"
+  },
+  {
+    "elapsed_seconds": 217.8,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 1/32 steps",
+    "progress": 0.03125,
+    "eta": 6737.630433320999,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 238.0,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 2/32 steps",
+    "progress": 0.0625,
+    "eta": 3564.0773391723633,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 258.3,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 3/32 steps",
+    "progress": 0.09375,
+    "eta": 2492.6286266644797,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 273.5,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 4/32 steps",
+    "progress": 0.125,
+    "eta": 1911.5401792526245,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 293.7,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 5/32 steps",
+    "progress": 0.15625,
+    "eta": 1583.8328550338745,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 314.0,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 6/32 steps",
+    "progress": 0.1875,
+    "eta": 1358.6639077663422,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 334.2,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 7/32 steps",
+    "progress": 0.21875,
+    "eta": 1191.9544926711492,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 354.4,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 8/32 steps",
+    "progress": 0.25,
+    "eta": 1061.8218684196472,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 369.5,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 9/32 steps",
+    "progress": 0.28125,
+    "eta": 943.2233426570892,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 389.7,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 10/32 steps",
+    "progress": 0.3125,
+    "eta": 856.4664457321167,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 410.0,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 11/32 steps",
+    "progress": 0.34375,
+    "eta": 781.7837344733152,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 430.2,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 12/32 steps",
+    "progress": 0.375,
+    "eta": 716.2610932191212,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 450.4,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 13/32 steps",
+    "progress": 0.40625,
+    "eta": 657.659917482963,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 465.6,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 14/32 steps",
+    "progress": 0.4375,
+    "eta": 598.0380420684814,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 485.8,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 15/32 steps",
+    "progress": 0.46875,
+    "eta": 550.1072781880696,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 506.0,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 16/32 steps",
+    "progress": 0.5,
+    "eta": 505.59666895866394,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 526.2,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 17/32 steps",
+    "progress": 0.53125,
+    "eta": 463.93075136577386,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 546.4,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 18/32 steps",
+    "progress": 0.5625,
+    "eta": 424.6674065589905,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 566.7,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 19/32 steps",
+    "progress": 0.59375,
+    "eta": 387.42585345318446,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 581.8,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 20/32 steps",
+    "progress": 0.625,
+    "eta": 348.83002638816833,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 602.1,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 21/32 steps",
+    "progress": 0.65625,
+    "eta": 315.12576019196285,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 622.3,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 22/32 steps",
+    "progress": 0.6875,
+    "eta": 282.6590008085424,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 642.5,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 23/32 steps",
+    "progress": 0.71875,
+    "eta": 251.2332930253899,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 662.7,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 24/32 steps",
+    "progress": 0.75,
+    "eta": 220.75472172101342,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 677.9,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 25/32 steps",
+    "progress": 0.78125,
+    "eta": 189.6753374195099,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 698.1,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 26/32 steps",
+    "progress": 0.8125,
+    "eta": 160.9914771960332,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 718.3,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 27/32 steps",
+    "progress": 0.84375,
+    "eta": 132.93268102186698,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 738.5,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 28/32 steps",
+    "progress": 0.875,
+    "eta": 105.44035635675698,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 758.7,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 29/32 steps",
+    "progress": 0.90625,
+    "eta": 78.44299507141113,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 774.0,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 30/32 steps",
+    "progress": 0.9375,
+    "eta": 51.566878811518336,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 794.2,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 31/32 steps",
+    "progress": 0.96875,
+    "eta": 25.603365482822596,
+    "gpu": "24951 MiB, 100 %"
+  },
+  {
+    "elapsed_seconds": 814.4,
+    "stage": "generating",
+    "textinfo": "MiniMax H3: 32/32 steps",
+    "progress": 1.0,
+    "eta": 0.0,
+    "gpu": "757 MiB, 0 %"
+  },
+  {
+    "elapsed_seconds": 905.3,
+    "stage": "complete",
+    "textinfo": "Waiting...",
+    "progress": null,
+    "eta": null,
+    "gpu": "365 MiB, 0 %"
+  }
+]

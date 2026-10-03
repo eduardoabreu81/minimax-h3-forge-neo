@@ -1,0 +1,113 @@
+{
+  "inference_performed": true,
+  "through_forge_generation_callback": true,
+  "elapsed_seconds": 903.2,
+  "native_source": "h3-20261003-d0ae230d3b0f.mp4",
+  "generation_started_iso_utc": "2026-10-03T01:46:35.538917+00:00",
+  "generation_finished_iso_utc": "2026-10-03T02:01:38.738917+00:00",
+  "generation_started_iso_sao_paulo": "2026-10-02T22:46:35.538917-03:00",
+  "generation_finished_iso_sao_paulo": "2026-10-02T23:01:38.738917-03:00",
+  "native_streams": {
+    "video": {
+      "codec_name": "h264",
+      "width": 448,
+      "height": 672,
+      "r_frame_rate": "24/1",
+      "duration": "6.583333",
+      "nb_read_frames": "158"
+    },
+    "audio": {
+      "codec_name": "aac",
+      "sample_rate": "32000",
+      "channels": 2,
+      "duration": "6.560000"
+    },
+    "container_duration": "6.583333",
+    "full_decode_passed": true
+  },
+  "delivery_streams": {
+    "video": {
+      "codec_name": "h264",
+      "width": 440,
+      "height": 652,
+      "r_frame_rate": "24/1",
+      "duration": "6.000000",
+      "nb_read_frames": "144"
+    },
+    "audio": {
+      "codec_name": "aac",
+      "sample_rate": "32000",
+      "channels": 2,
+      "duration": "6.000000"
+    },
+    "container_duration": "6.000000",
+    "full_decode_passed": true
+  },
+  "delivery": {
+    "width": 440,
+    "height": 652,
+    "frames": 144,
+    "fps": 24,
+    "seconds": 6,
+    "center_crop_pixels_per_edge": {
+      "left": 4,
+      "right": 4,
+      "top": 10,
+      "bottom": 10
+    },
+    "trimmed_final_frames": 14,
+    "video_reencoded": true,
+    "audio_reencoded": true,
+    "upscaled": false
+  },
+  "video": "h3-laundromat-6s.mp4",
+  "metadata": "h3-laundromat-6s.json",
+  "poster": "h3-laundromat-6s.png",
+  "contact_sheet": "h3-laundromat-contact.jpg",
+  "audio": "h3-laundromat-6s.wav",
+  "bytes": 1592836,
+  "sha256": "c3fc8a5bcae067a1a19bd9b550d6545561de01d841319d688bfa551cb1ff7eaf",
+  "audio_rms": 0.12810179954235806,
+  "audio_rms_dbfs": -17.848895387022488,
+  "story_adherence_reviewed": true,
+  "audio_semantics_reviewed": false,
+  "forge_performance": {
+    "forge_reported_seconds": 902.3,
+    "torch_active_peak_gib_rounded": 23.94,
+    "torch_reserved_peak_gib_rounded": 24.03,
+    "cuda_system_sampled_peak_gib_rounded": 24.6,
+    "cuda_mem_get_info_total_gib_rounded": 44.4229,
+    "source": "Forge generation response performance HTML; binary units despite GB label"
+  },
+  "delivery_postprocess_seconds": 3.3,
+  "extension": "0.1.2",
+  "gpu": "NVIDIA A40",
+  "date": "2026-10-02",
+  "visual_review": {
+    "method": "Twelve delivery frames at 2 FPS, the delivery ending frame, and the native ending frame",
+    "scope": "Sampled frames only; continuous playback and audio semantics not reviewed",
+    "observations": [
+      "A front-loading washing machine in a laundromat opens and releases a torrent.",
+      "Clothes, fish, a swimming dog, and a seal-like animal appear in that order in the reviewed frames.",
+      "The delivery ending retains the seal-like animal emerging into the flooded floor; the uncropped native ending also shows more of its body."
+    ],
+    "limitations": [
+      "Full motion quality and audiovisual synchronization have not been assessed.",
+      "Sampled frames establish the visible sequence, not perfect physical realism or exact animal anatomy."
+    ]
+  },
+  "story_adherence_review_scope": "sampled_frames_only",
+  "nvidia_sampling": {
+    "requested_interval_seconds": 5,
+    "sample_count": 179,
+    "first_sample_elapsed_seconds": 5.6,
+    "last_sample_elapsed_seconds": 905.3,
+    "sampled_max_memory_mib": 24951,
+    "instantaneous_peak_guaranteed": false
+  },
+  "estimated_generation_cost_usd": {
+    "gpu_only": 0.123,
+    "with_running_storage": 0.129,
+    "scope": "Dated rate estimate for request wall time, excluding preparation, delivery processing and idle time"
+  }
+}

@@ -1,0 +1,97 @@
+{
+  "inference_performed": true,
+  "through_forge_generation_callback": true,
+  "elapsed_seconds": 4772.2,
+  "native_source": "h3-20261002-a1bfa882539a.mp4",
+  "generation_started_iso_utc": "2026-10-02T23:54:41.547289+00:00",
+  "generation_finished_iso_utc": "2026-10-03T01:14:13.747289+00:00",
+  "generation_started_iso_sao_paulo": "2026-10-02T20:54:41.547289-03:00",
+  "generation_finished_iso_sao_paulo": "2026-10-02T22:14:13.747289-03:00",
+  "native_streams": {
+    "video": {
+      "codec_name": "h264",
+      "width": 576,
+      "height": 1024,
+      "r_frame_rate": "24/1",
+      "duration": "15.083333",
+      "nb_read_frames": "362"
+    },
+    "audio": {
+      "codec_name": "aac",
+      "sample_rate": "32000",
+      "channels": 2,
+      "duration": "15.072000"
+    },
+    "container_duration": "15.083333",
+    "full_decode_passed": true
+  },
+  "delivery_streams": {
+    "video": {
+      "codec_name": "h264",
+      "width": 576,
+      "height": 1024,
+      "r_frame_rate": "24/1",
+      "duration": "15.000000",
+      "nb_read_frames": "360"
+    },
+    "audio": {
+      "codec_name": "aac",
+      "sample_rate": "32000",
+      "channels": 2,
+      "duration": "15.000000"
+    },
+    "container_duration": "15.000000",
+    "full_decode_passed": true
+  },
+  "video": "h3-neon-door-1k.mp4",
+  "metadata": "h3-neon-door-1k.json",
+  "poster": "h3-neon-door-1k.png",
+  "contact_sheet": "h3-neon-door-contact.jpg",
+  "audio": "h3-neon-door-1k.wav",
+  "bytes": 6345870,
+  "sha256": "c493fb62c019d29c75b4512a530dac817a2e37f3867c3eb6f72ba72ee0d67354",
+  "audio_rms": 0.0601718756252138,
+  "audio_rms_dbfs": -24.412129016972685,
+  "story_adherence_reviewed": true,
+  "audio_semantics_reviewed": false,
+  "delivery_postprocess_seconds": 13.8,
+  "forge_performance": {
+    "forge_reported_seconds": 4771.0,
+    "torch_active_peak_gib_rounded": 23.37,
+    "torch_reserved_peak_gib_rounded": 25.5,
+    "cuda_system_sampled_peak_gib_rounded": 26.1,
+    "cuda_mem_get_info_total_gib_rounded": 44.4229,
+    "source": "Forge generation response performance HTML; binary units despite GB label"
+  },
+  "date": "2026-10-02",
+  "extension": "0.1.2",
+  "gpu": "NVIDIA A40",
+  "visual_review": {
+    "method": "First frame, ten-frame contact sheet, and six ending frames at 2 FPS",
+    "scope": "Sampled frames only; continuous playback and audio semantics not reviewed",
+    "observations": [
+      "A woman runs through a wet neon alley, with pursuing figures visible.",
+      "She draws a door on the wall and opens it onto oversized dark flowers.",
+      "She enters the flower world; the ending samples show pursuers facing a closed, flat-looking painted door."
+    ],
+    "limitations": [
+      "Sampled frames cannot establish an unbroken camera shot or exact audiovisual synchronization.",
+      "The precise hair streaks and every requested facial detail are not established by this review."
+    ]
+  },
+  "story_adherence_review_scope": "sampled_frames_only",
+  "nvidia_sampling": {
+    "sample_count": 847,
+    "requested_interval_seconds": 5,
+    "first_sample_elapsed_seconds": 500.0,
+    "last_sample_elapsed_seconds": 4776.4,
+    "sampled_max_memory_mib": 26457,
+    "instantaneous_peak_guaranteed": false,
+    "startup_sampling_complete": false
+  },
+  "estimated_generation_cost_usd": {
+    "gpu_only": 0.65,
+    "with_running_storage": 0.683,
+    "scope": "Dated rate estimate for request wall time; excludes preparation, delivery processing, and idle time"
+  }
+}

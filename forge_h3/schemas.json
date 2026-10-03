@@ -1,0 +1,114 @@
+{
+  "source": "modelscope/DiffSynth-Studio",
+  "commit": "974cfa37f27ac55eba3b6d10efa21f876900572d",
+  "schemas": [
+    {
+      "hash": "db383f1c8960837b94059f7722e6cb11",
+      "role": "audio_vae",
+      "class": "diffsynth.models.minimax_h3_audio_vae.MiniMaxH3AudioVAE",
+      "quantization": "plain"
+    },
+    {
+      "hash": "8398104725e58fa8287c163c5c332686",
+      "role": "text_encoder",
+      "class": "diffsynth.models.minimax_h3_text_encoder.MiniMaxH3TextEncoder",
+      "quantization": "plain"
+    },
+    {
+      "hash": "297933c3a2b0fc4d4dfee30e34c566b8",
+      "role": "text_encoder",
+      "class": "diffsynth.models.minimax_h3_text_encoder.MiniMaxH3TextEncoder",
+      "quantization": "nf4"
+    },
+    {
+      "hash": "d6473c909b72b73afc4fa00c273d1da2",
+      "role": "text_encoder",
+      "class": "diffsynth.models.minimax_h3_text_encoder.MiniMaxH3TextEncoder",
+      "quantization": "int8"
+    },
+    {
+      "hash": "db0197b6919425a5c7102c54e73affc1",
+      "role": "dit",
+      "class": "diffsynth.models.minimax_h3_dit.MiniMaxH3DiT",
+      "quantization": "plain"
+    },
+    {
+      "hash": "fb6c399412920c6b817d5c1f43ec62cd",
+      "role": "dit",
+      "class": "diffsynth.models.minimax_h3_dit_comfy.MiniMaxH3DiTComfy",
+      "quantization": "int8"
+    },
+    {
+      "hash": "ac9fdcd56900c9a1a5ef21eaacf6cb76",
+      "role": "dit",
+      "class": "diffsynth.models.minimax_h3_dit_comfy.MiniMaxH3DiTComfyPruned",
+      "quantization": "int8"
+    },
+    {
+      "hash": "7e410be9acd325ef8db3b8bed3d814cd",
+      "role": "dit",
+      "class": "diffsynth.models.minimax_h3_dit_comfy.MiniMaxH3DiTComfyPruned",
+      "quantization": "fp8"
+    },
+    {
+      "hash": "b4e0df87da0c079979ae857edbcef49f",
+      "role": "dit",
+      "class": "diffsynth.models.minimax_h3_dit_comfy.MiniMaxH3DiTComfyPruned",
+      "quantization": "plain"
+    },
+    {
+      "hash": "4b27efacefbc4d8670e0d7b876699648",
+      "role": "dit",
+      "class": "diffsynth.models.minimax_h3_dit.MiniMaxH3DiT",
+      "quantization": "nf4"
+    },
+    {
+      "hash": "ae44c4b18f5eea35d533bf9ca7b529ae",
+      "role": "dit",
+      "class": "diffsynth.models.minimax_h3_dit.MiniMaxH3DiT",
+      "quantization": "nf4"
+    },
+    {
+      "hash": "9b8f1cbc6fb5fcd2e2c02b6691480427",
+      "role": "dit",
+      "class": "diffsynth.models.minimax_h3_dit_comfy.MiniMaxH3DiTComfyPruned",
+      "quantization": "nf4"
+    },
+    {
+      "hash": "072bd13242d6d67df79a154e7c4274b3",
+      "role": "dit",
+      "class": "diffsynth.models.minimax_h3_dit_comfy.MiniMaxH3DiTComfyPruned",
+      "quantization": "nf4"
+    },
+    {
+      "hash": "24b80900992e2024fab17c991c57da23",
+      "role": "video_vae",
+      "class": "diffsynth.models.minimax_h3_video_vae.MiniMaxH3VideoVAE",
+      "quantization": "plain"
+    },
+    {
+      "hash": "204819338f4fa12936684eeda37fdf71",
+      "role": "video_vae",
+      "class": "diffsynth.models.minimax_h3_video_vae.MiniMaxH3VideoVAE",
+      "quantization": "nf4"
+    },
+    {
+      "hash": "925ae768f8f4a9daa902b789de2ad2dc",
+      "role": "audio_vae",
+      "class": "diffsynth.models.minimax_h3_audio_vae.MiniMaxH3AudioVAE",
+      "quantization": "nf4"
+    },
+    {
+      "hash": "c00577940e5a11f0fb5a0a754ac6003d",
+      "role": "dit",
+      "class": "diffsynth.models.minimax_h3_dit_comfy.MiniMaxH3DiTComfyPruned",
+      "quantization": "int8"
+    },
+    {
+      "hash": "dea0301a17c3e68100ecc6cf9f52e2e5",
+      "role": "dit",
+      "class": "diffsynth.models.minimax_h3_dit_comfy.MiniMaxH3DiTComfy",
+      "quantization": "int8"
+    }
+  ]
+}

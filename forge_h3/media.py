@@ -1,0 +1,106 @@
+"""Atomic local exports using Forge's FFmpeg or imageio's bundled executable."""
+
+import os
+import shutil
+import subprocess
+import tempfile
+import wave
+from pathlib import Path
+
+import numpy as np
+from PIL.PngImagePlugin import PngInfo
+
+from .contracts import FPS, SAMPLE_RATE, H3Error
+
+
+def find_ffmpeg(configured=""):
+    if configured:
+        candidate = Path(configured).expanduser()
+        if candidate.is_file():
+            return str(candidate.resolve())
+        raise H3Error("H3 FFmpeg executable does not exist. Correct it in Settings.")
+    executable = shutil.which("ffmpeg")
+    if executable:
+        return executable
+    try:
+        import imageio_ffmpeg
+        executable = imageio_ffmpeg.get_ffmpeg_exe()
+    except (ImportError, RuntimeError):
+        raise H3Error("FFmpeg is missing. Install FFmpeg or imageio-ffmpeg, or set H3 FFmpeg executable in Settings.") from None
+    return executable
+
+
+def _write_wave(audio, path, samples):
+    if hasattr(audio, "detach"):
+        audio = audio.detach().float().cpu().numpy()
+    audio = np.asarray(audio, dtype=np.float32)
+    if audio.ndim == 1:
+        audio = audio[None, :]
+    if audio.ndim != 2 or audio.shape[0] not in (1, 2) or not audio.shape[1]:
+        raise H3Error("H3 audio must have shape [channels, samples] with one or two channels.")
+    if not np.isfinite(audio).all():
+        raise H3Error("H3 audio must contain finite samples.")
+    aligned = np.zeros((audio.shape[0], samples), dtype=np.float32)
+    count = min(samples, audio.shape[1])
+    aligned[:, :count] = audio[:, :count]
+    pcm = (np.clip(aligned, -1, 1).T * 32767).astype("<i2")
+    with wave.open(str(path), "wb") as writer:
+        writer.setnchannels(pcm.shape[1])
+        writer.setsampwidth(2)
+        writer.setframerate(SAMPLE_RATE)
+        writer.writeframes(pcm.tobytes())
+
+
+def export_video(frames, audio, output, *, ffmpeg="", infotext="", cancelled=lambda: False):
+    if not frames:
+        raise H3Error("The H3 backend returned no frames.")
+    target = Path(output).resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    executable = find_ffmpeg(ffmpeg)
+    with tempfile.TemporaryDirectory(prefix=".h3-export-", dir=target.parent) as scratch:
+        scratch = Path(scratch)
+        size = frames[0].size
+        for index, frame in enumerate(frames):
+            if cancelled():
+                from .contracts import GenerationCancelled
+                raise GenerationCancelled("H3 export cancelled.")
+            if frame.size != size or size[0] % 2 or size[1] % 2:
+                raise H3Error("H3 frames must have equal, even dimensions.")
+            frame.convert("RGB").save(scratch / f"{index:06d}.png")
+        encoded = scratch / "result.mp4"
+        command = [executable, "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+                   "-framerate", str(FPS), "-i", str(scratch / "%06d.png")]
+        if audio is not None:
+            _write_wave(audio, scratch / "audio.wav", round(len(frames) / FPS * SAMPLE_RATE))
+            command += ["-i", str(scratch / "audio.wav"), "-map", "0:v:0", "-map", "1:a:0",
+                        "-c:a", "aac", "-b:a", "192k"]
+        else:
+            command += ["-an"]
+        command += ["-frames:v", str(len(frames)), "-c:v", "libx264", "-crf", "18",
+                    "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                    "-metadata", "comment=" + infotext, str(encoded)]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=600,
+                                    check=False,
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise H3Error(f"H3 video export failed: {exc}") from exc
+        if result.returncode or not encoded.is_file():
+            raise H3Error("H3 video export failed: " + result.stderr[-2000:])
+        if cancelled():
+            from .contracts import GenerationCancelled
+            raise GenerationCancelled("H3 export cancelled.")
+        os.replace(encoded, target)
+    return str(target)
+
+
+def export_still(image, output, infotext):
+    target = Path(output).resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    info = PngInfo()
+    info.add_text("parameters", infotext)
+    with tempfile.TemporaryDirectory(prefix=".h3-image-", dir=target.parent) as scratch:
+        candidate = Path(scratch) / "result.png"
+        image.save(candidate, format="PNG", pnginfo=info)
+        os.replace(candidate, target)
+    return str(target)
