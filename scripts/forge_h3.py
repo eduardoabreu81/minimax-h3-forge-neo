@@ -1,6 +1,7 @@
 """Forge Neo discovers this always-on script when the extension is installed."""
 
 import sys
+import traceback
 from pathlib import Path
 
 ROOT = str(Path(__file__).resolve().parents[1])
@@ -10,6 +11,23 @@ if ROOT not in sys.path:
 from modules import script_callbacks, scripts, shared
 
 from forge_h3 import integration, ui
+from forge_h3.native import compat
+
+ENABLED = False
+
+_problems = compat.check()
+
+if _problems:
+    compat.report(_problems)
+else:
+    try:
+        from forge_h3.native import patches
+
+        patches.apply()
+        ENABLED = True
+    except Exception:
+        print("[MiniMax H3] failed to enable, Forge Neo is unchanged:")
+        traceback.print_exc()
 
 
 class Script(scripts.Script):
@@ -20,30 +38,37 @@ class Script(scripts.Script):
         return "MiniMax H3"
 
     def show(self, is_img2img):
-        return scripts.AlwaysVisible
+        return scripts.AlwaysVisible if ENABLED else False
 
     def ui(self, is_img2img):
         self.panel = ui.Panel(is_img2img)
         return self.panel.inputs
 
-    def setup(self, p, output="Video", include_audio=True, memory="Automatic"):
-        p.h3_settings = dict(output=output, include_audio=include_audio, memory=memory)
+    def before_process(self, p, output="Video", include_audio=True, *args):
+        integration.before_process(p, output, include_audio)
+
+    def process(self, p, *args):
+        integration.process(p)
+
+    def process_before_every_sampling(self, p, *args, **kwargs):
+        integration.before_sampling(p, kwargs["noise"])
+
+    def post_sample(self, p, ps, *args):
+        integration.after_sampling(p)
+
+    def postprocess(self, p, processed, *args):
+        integration.postprocess(p, processed)
 
 
 def settings():
     section = ("forge_h3", "MiniMax H3")
-    shared.opts.add_option("h3_processor_dir", shared.OptionInfo("", "H3 Processor directory", section=section))
     shared.opts.add_option("h3_ffmpeg_path", shared.OptionInfo("", "H3 FFmpeg executable (empty = automatic)", section=section))
 
 
-def unload():
-    integration.uninstall()
-    ui.reset()
-
-
 script_callbacks.on_ui_settings(settings)
+# a rebuilt UI starts with no panels: the ones of a previous build can never bind again
+script_callbacks.on_before_ui(ui.reset)
 script_callbacks.on_after_component(ui.capture)
-script_callbacks.on_before_ui(integration.install)
 script_callbacks.on_ui_tabs(ui.bind_all)
 script_callbacks.on_app_started(ui.check_bindings)
-script_callbacks.on_script_unloaded(unload)
+script_callbacks.on_script_unloaded(ui.reset)

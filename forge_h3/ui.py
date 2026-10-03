@@ -11,8 +11,14 @@ from .models import ROLE_LABELS, inspect_model
 from .ui_state import frame_view, preset_frame_view
 
 COMPONENTS = {}
+NATIVE_CONTROLS = ("batch_size", "batch_count", "sampling", "scheduler", "cfg_scale")
 PANELS = []
 logger = logging.getLogger("forge_h3")
+
+
+def _in_blocks():
+    # Forge also creates components outside the UI build (on page load); events can only be bound inside it
+    return gr.context.Context.root_block is not None
 
 
 def capture(component, **kwargs):
@@ -24,7 +30,7 @@ def capture(component, **kwargs):
             if key not in COMPONENTS:
                 COMPONENTS[key] = gr.Markdown(value="", visible=False, elem_id=key)
         if elem_id in ("setting_sd_model_checkpoint", "setting_sd_modules", "forge_ui_preset"):
-            bind_all()
+            bind_all(elem_id)
 
 
 class Panel:
@@ -37,26 +43,33 @@ class Panel:
                                    visible=not is_img2img, elem_id=f"{self.tab}_h3_output")
             self.audio = gr.Checkbox(value=True, label="Include generated audio", elem_id=f"{self.tab}_h3_audio")
             if is_img2img:
-                gr.Markdown("The image in img2img is used as the first frame.")
+                gr.Markdown("Image-to-video is not available in the native backend yet; use txt2img.")
             self.status = gr.Markdown("Select the H3 text encoder, video VAE and audio VAE in VAE / Text Encoder.")
-            with gr.Accordion("Advanced", open=False):
-                self.memory = gr.Radio(["Automatic", "Economical"], value="Automatic", label="Memory usage",
-                                       elem_id=f"{self.tab}_h3_memory")
+            with gr.Accordion("Components", open=False):
                 self.summary = gr.Markdown("")
         self.bound = False
+        self.attempts = []
         PANELS.append(self)
 
     @property
     def inputs(self):
-        return [self.output, self.audio, self.memory]
+        return [self.output, self.audio]
 
-    def bind(self):
+    @property
+    def needed(self):
+        ids = [f"{self.tab}_{name}" for name in NATIVE_CONTROLS]
+        return ids + ["setting_sd_model_checkpoint", "setting_sd_modules", f"{self.tab}_h3_duration"]
+
+    def bind(self, trigger="?"):
         if self.bound:
             return
-        names = ["batch_size", "batch_count", "sampling", "scheduler", "cfg_scale"]
-        ids = [f"{self.tab}_{name}" for name in names]
-        needed = ids + ["setting_sd_model_checkpoint", "setting_sd_modules", f"{self.tab}_h3_duration"]
+        if not _in_blocks():
+            self.attempts.append(f"{trigger}: outside Blocks")
+            return
+        ids = [f"{self.tab}_{name}" for name in NATIVE_CONTROLS]
+        needed = self.needed
         if any(name not in COMPONENTS for name in needed):
+            self.attempts.append(f"{trigger}: waiting for {', '.join(n for n in needed if n not in COMPONENTS)}")
             logger.debug("Waiting for H3 native controls for %s.", self.tab)
             return
         native = [COMPONENTS[name] for name in ids]
@@ -71,7 +84,6 @@ class Panel:
         outputs = [self.accordion, self.audio, duration, self.status, self.summary, self.saved] + native + preset_input
 
         def update(value, output, module_values, saved, *values):
-            from modules import shared
             preset_value = values[-1] if preset is not None else None
             values = values[:len(native)]
             info = checkpoint_info(value)
@@ -98,9 +110,10 @@ class Panel:
                 updates[0] = gr.update(**frame_view(True, output, frames))
                 frames = frame_view(True, output, frames)["value"]
                 updates[1] = gr.update(value=1, visible=False)
-                updates[2] = gr.update(choices=["Euler"], value="Euler")
-                updates[3] = gr.update(choices=["Simple"], value="Simple")
                 if entering:
+                    # the starting point of the reference workflows; every Forge sampler and schedule works
+                    updates[2] = gr.update(value="Res Multistep")
+                    updates[3] = gr.update(value="Simple")
                     updates[4] = gr.update(value=1.0)
             elif leaving:
                 updates = [gr.update(**config) for config in saved.get("native", [])]
@@ -109,14 +122,9 @@ class Panel:
             summary = ""
             if active:
                 try:
-                    from pathlib import Path
-
-                    from modules import paths
-
                     from .integration import module_paths
                     from .models import resolve_components
-                    processor = getattr(shared.opts, "h3_processor_dir", "") or str(Path(paths.models_path) / "H3" / "processor")
-                    components = resolve_components(info.filename, module_paths(module_values), processor)
+                    components = resolve_components(info.filename, module_paths(module_values))
                     summary = "  \n".join(f"**{ROLE_LABELS[m.role].title()}:** {html.escape(m.path.name)} ({m.quantization})" for m in components.models)
                     error = ""
                 except H3Error as exc:
@@ -125,7 +133,7 @@ class Panel:
             return [gr.update(visible=active), gr.update(visible=active and output == "Video"),
                     gr.update(value=f"{frames} frames / {FPS} FPS = {frames / FPS:.2f} seconds" if active else "",
                               visible=active and output == "Video"), status, summary, saved] + updates + (
-                                  [gr.update(interactive=not active)] if preset is not None else [])
+                                  [gr.update()] if preset is not None else [])
 
         for event in (checkpoint.change, self.output.change, modules.change):
             event(update, inputs=inputs, outputs=outputs, queue=False, show_progress=False)
@@ -137,16 +145,22 @@ class Panel:
         logger.info("H3 native controls connected for %s.", self.tab)
 
 
-def bind_all():
+def bind_all(trigger="ui_tabs"):
     for panel in PANELS:
-        panel.bind()
+        panel.bind(trigger)
     return []
 
 
 def check_bindings(*_args):
-    for panel in PANELS:
-        if not panel.bound:
-            logger.error("H3 native controls were not found for %s; restart Forge after updating it.", panel.tab)
+    # Forge also builds panel instances it never renders; a tab is fine as long as one of its panels is bound
+    for tab in dict.fromkeys(panel.tab for panel in PANELS):
+        panels = [panel for panel in PANELS if panel.tab == tab]
+        if any(panel.bound for panel in panels):
+            continue
+        missing = sorted({name for panel in panels for name in panel.needed if name not in COMPONENTS})
+        attempts = [attempt for panel in panels for attempt in panel.attempts]
+        logger.error("H3 native controls were not found for %s (missing: %s; attempts: %s); restart Forge after "
+                     "updating it.", tab, ", ".join(missing) or "none", "; ".join(attempts) or "none")
 
 
 def reset():

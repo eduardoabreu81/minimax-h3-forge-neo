@@ -67,7 +67,8 @@ class GradioSmoke(unittest.TestCase):
             modules = types.ModuleType("modules")
             modules.shared = types.SimpleNamespace(opts=types.SimpleNamespace(h3_processor_dir=str(processor)))
             modules.paths = types.SimpleNamespace(models_path=str(root))
-            modules.sd_models = types.SimpleNamespace(checkpoint_aliases={"Community": info}, checkpoints_list={"Community": info})
+            modules.sd_models = types.SimpleNamespace(checkpoint_aliases={"Community": info}, checkpoints_list={"Community": info},
+                                                      get_closet_checkpoint_match={"Community": info}.get)
             forge = types.ModuleType("modules_forge")
             forge.main_entry = types.SimpleNamespace(module_list={p.name: str(p) for p in components})
             presets = types.ModuleType("modules_forge.presets")
@@ -110,8 +111,9 @@ class GradioSmoke(unittest.TestCase):
                 leave_wan = fn("Regular", "Video", [], enter_wan[5], 124, 1, "Euler", "Simple", 1, "wan")
                 self.assertEqual((leave_wan[6]["maximum"], leave_wan[6]["step"], leave_wan[6]["label"]), (241, 16, "Frames"))
                 self.assertEqual(leave_wan[6]["value"], 129)
-                self.assertFalse(enter_wan[-1]["interactive"])
-                self.assertTrue(leave_wan[-1]["interactive"])
+                # the UI preset stays free: switching it is how the user leaves H3, and "h3" is a preset of its own
+                self.assertNotIn("interactive", enter_wan[-1])
+                self.assertNotIn("interactive", leave_wan[-1])
                 ui.reset()
 
 

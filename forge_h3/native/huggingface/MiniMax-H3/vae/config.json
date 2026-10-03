@@ -1,0 +1,7 @@
+{
+  "_class_name": "AutoencoderMiniMaxH3",
+  "_diffusers_version": "0.37.0",
+  "video": "MiniMaxH3VideoVAE",
+  "audio": "MiniMaxH3AudioVAE",
+  "audio_sample_rate": 32000
+}

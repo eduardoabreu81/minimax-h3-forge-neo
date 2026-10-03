@@ -65,52 +65,61 @@ class HeaderTests(unittest.TestCase):
         dit = checkpoint(self.root / "model.safetensors", DIT)
         te = checkpoint(self.root / "encoder.safetensors", TE)
         with self.assertRaisesRegex(H3Error, "video VAE"):
-            resolve_components(dit, [te], self.root)
+            resolve_components(dit, [te])
 
     def test_duplicate_role_is_not_silently_selected(self):
         dit = checkpoint(self.root / "model.safetensors", DIT)
         a = checkpoint(self.root / "a.safetensors", TE)
         b = checkpoint(self.root / "b.safetensors", TE)
         with self.assertRaisesRegex(H3Error, "More than one"):
-            resolve_components(dit, [a, b], self.root)
-
-    def test_nvfp4_fails_with_actionable_error(self):
-        dit = checkpoint(self.root / "model.safetensors", DIT)
-        te = checkpoint(self.root / "encoder.safetensors", TE, {"quantization": "nvfp4_awq"})
-        with self.assertRaisesRegex(H3Error, "NVFP4"):
-            resolve_components(dit, [te], self.root)
+            resolve_components(dit, [a, b])
 
     def test_fast_model_is_not_treated_as_standard_fl2va(self):
         path = checkpoint(self.root / "model.safetensors", DIT, {"modelspec.architecture": "FastH3"})
         self.assertEqual(inspect_model(path).variant, "fast")
+        te = checkpoint(self.root / "encoder.safetensors", TE)
+        with self.assertRaisesRegex(H3Error, "FastH3"):
+            resolve_components(path, [te])
+
+    def test_nvfp4_text_encoder_is_rejected(self):
+        dit = checkpoint(self.root / "model.safetensors", DIT)
+        te = checkpoint(self.root / "encoder.safetensors", TE, {"quantization": "nvfp4_awq"})
+        vae = checkpoint(self.root / "video.safetensors", VIDEO_VAE)
+        audio = checkpoint(self.root / "audio.safetensors", AUDIO_VAE)
+        with self.assertRaisesRegex(H3Error, "NVFP4"):
+            resolve_components(dit, [te, vae, audio])
+
+    def test_int8_video_vae_is_rejected_before_loading(self):
+        dit = checkpoint(self.root / "model.safetensors", DIT)
+        te = checkpoint(self.root / "encoder.safetensors", TE)
+        quantized = dict(VIDEO_VAE, **{"decoder.transformer_blocks.0.attn.to_qkv.comfy_quant": ("U8", [72])})
+        vae = checkpoint(self.root / "video.safetensors", quantized)
+        audio = checkpoint(self.root / "audio.safetensors", AUDIO_VAE)
+        with self.assertRaisesRegex(H3Error, "int8 H3 video VAE"):
+            resolve_components(dit, [te, vae, audio])
+
+    def test_complete_selection_resolves(self):
+        paths = [checkpoint(self.root / f"{n}.safetensors", t) for n, t in (("te", TE), ("v", VIDEO_VAE), ("a", AUDIO_VAE))]
+        components = resolve_components(checkpoint(self.root / "model.safetensors", DIT), paths)
+        self.assertEqual([m.role for m in components.models], ["dit", "text_encoder", "video_vae", "audio_vae"])
 
 
 class RequestTests(unittest.TestCase):
     def test_grid_alignment_and_duration(self):
         self.assertEqual([align_frames(n) for n in (1, 5, 6, 123, 124)], [5, 5, 22, 124, 124])
-        request = GenerationRequest(prompt="A bird", frames=124, steps=20)
+        request = GenerationRequest(frames=124)
         self.assertAlmostEqual(request.duration, 124 / 24)
-        self.assertEqual(request.steps, 20)
 
     def test_still_image_uses_five_frames(self):
-        request = GenerationRequest(prompt="A bird", output="Still image", frames=124)
+        request = GenerationRequest(output="Still image", frames=124)
         self.assertEqual(request.frames, 5)
         self.assertFalse(request.include_audio)
 
-    def test_unsupported_sampler_is_rejected(self):
-        with self.assertRaisesRegex(H3Error, "Euler"):
-            GenerationRequest(prompt="A bird", sampler="DPM++ 2M")
-
     def test_invalid_grid_and_dimensions_are_not_silently_changed(self):
         with self.assertRaisesRegex(H3Error, "17n"):
-            GenerationRequest(prompt="A bird", frames=125)
+            GenerationRequest(frames=125)
         with self.assertRaisesRegex(H3Error, "32"):
-            GenerationRequest(prompt="A bird", width=833)
-
-    def test_random_seed_is_resolved_once(self):
-        request = GenerationRequest(prompt="A bird", seed=-1)
-        self.assertGreaterEqual(request.seed, 0)
-        self.assertEqual(request.seed, request.seed)
+            GenerationRequest(width=833)
 
 
 if __name__ == "__main__":

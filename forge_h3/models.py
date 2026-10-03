@@ -1,9 +1,8 @@
 """Read only safetensors headers; never deserialize a checkpoint to discover it."""
 
-import hashlib
 import json
 import struct
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
@@ -12,15 +11,6 @@ from .contracts import H3Error
 MAX_HEADER_BYTES = 32 * 1024 * 1024
 ROLE_LABELS = {"dit": "diffusion model", "text_encoder": "text encoder",
                "video_vae": "video VAE", "audio_vae": "audio VAE"}
-
-
-def schema_fingerprint(header):
-    """Match DiffSynth's published keys-and-shapes identifier, not file contents."""
-    parts = []
-    for name, tensor in header.items():
-        if name != "__metadata__":
-            parts.extend((name, name + ":" + "_".join(map(str, tensor["shape"]))))
-    return hashlib.md5(",".join(sorted(parts)).encode()).hexdigest()
 
 
 def _unique_pairs(pairs):
@@ -74,7 +64,32 @@ class ModelInfo:
     role: str
     quantization: str
     variant: str
-    signature: str
+
+
+def _role(keys):
+    clean = {k.removeprefix("model.diffusion_model.") for k in keys}
+    if {"video_patch_proj.weight", "audio_patch_proj.weight",
+            "final_layer.video_out.weight", "final_layer.audio_out.weight"} <= clean:
+        return "dit"
+    if (any(k.endswith("embed_tokens.weight") for k in keys) and any("visual." in k for k in keys)
+            and any("layers.49." in k for k in keys)):
+        return "text_encoder"
+    if any(k.startswith("decoder.x_embedder.") for k in keys) and any(k.startswith("decoder.register_tokens") for k in keys):
+        return "video_vae"
+    if {"pre_block.attn.q_bias", "pre_block.attn.v_bias", "pre_block.attn.zero_k_bias"} <= keys:
+        return "audio_vae"
+    return None
+
+
+def _quantization(header, keys):
+    metadata = json.dumps(header.get("__metadata__", {})).lower()
+    if "nvfp4" in metadata or "awq" in metadata or any(k.endswith("weight_scale_2") for k in keys):
+        return "nvfp4"
+    if any(k.endswith(".weight_s_rel") for k in keys):
+        return "w6a8"
+    if any("weight_scale" in k or "scale_weight" in k for k in keys):
+        return "int8" if any(v.get("dtype") == "I8" for k, v in header.items() if k != "__metadata__") else "fp8"
+    return "plain"
 
 
 def inspect_model(path):
@@ -82,37 +97,15 @@ def inspect_model(path):
     if path.suffix.lower() != ".safetensors":
         return None
     header = read_header(path)
-    registry = json.loads(Path(__file__).with_name("schemas.json").read_text(encoding="utf-8"))
-    schema = next((s for s in registry["schemas"] if s["hash"] == schema_fingerprint(header)), None)
     keys = set(header) - {"__metadata__"}
-    clean = {k.removeprefix("model.diffusion_model.") for k in keys}
-    role = schema["role"] if schema else None
-    if {"video_patch_proj.weight", "audio_patch_proj.weight",
-        "final_layer.video_out.weight", "final_layer.audio_out.weight"} <= clean:
-        role = "dit"
-    elif (any(k.endswith("embed_tokens.weight") for k in keys)
-          and any("visual." in k for k in keys)
-          and any("layers.49." in k for k in keys)):
-        role = "text_encoder"
-    elif any(k.startswith("decoder.x_embedder.") for k in keys) and any(k.startswith("decoder.register_tokens") for k in keys):
-        role = "video_vae"
-    elif {"pre_block.attn.q_bias", "pre_block.attn.v_bias", "pre_block.attn.zero_k_bias"} <= keys:
-        role = "audio_vae"
+    role = _role(keys)
     if role is None:
         return None
     metadata = json.dumps(header.get("__metadata__", {})).lower()
-    quant = "plain"
-    if "nvfp4" in metadata or "awq" in metadata or any(k.endswith("weight_scale_2") for k in keys):
-        quant = "nvfp4"
-    elif any("bitsandbytes" in k or "quant_state" in k for k in keys):
-        quant = "nf4"
-    elif any("weight_scale" in k or "scale_weight" in k for k in keys):
-        quant = "int8" if any(v.get("dtype") == "I8" for k, v in header.items() if k != "__metadata__") else "fp8"
-    if schema and quant != "nvfp4":
-        quant = schema["quantization"]
     variant = "fast" if "fasth3" in metadata or "fastvideo" in metadata else "standard"
-    signature = hashlib.sha256("\n".join(sorted(keys)).encode()).hexdigest()
-    return ModelInfo(path, role, quant, variant, signature)
+    if role == "video_vae" and any(k.endswith(".comfy_quant") for k in keys):
+        variant = "quantized"
+    return ModelInfo(path, role, _quantization(header, keys), variant)
 
 
 @dataclass(frozen=True)
@@ -121,19 +114,14 @@ class Components:
     text_encoder: ModelInfo
     video_vae: ModelInfo
     audio_vae: ModelInfo
-    processor: Path
-    prepared_processor: object = field(default=None, compare=False, repr=False)
 
     @property
     def models(self):
         return (self.dit, self.text_encoder, self.video_vae, self.audio_vae)
 
-    @property
-    def identity(self):
-        return tuple((str(m.path), m.path.stat().st_size, m.path.stat().st_mtime_ns) for m in self.models) + (str(self.processor),)
 
-
-def resolve_components(dit_path, module_paths, processor_path):
+def resolve_components(dit_path, module_paths):
+    """The H3 checkpoint and the three modules selected under VAE / Text Encoder, checked before Forge loads them."""
     dit = inspect_model(dit_path)
     if dit is None or dit.role != "dit":
         raise H3Error("The selected checkpoint is not a recognized H3 diffusion model.")
@@ -145,25 +133,14 @@ def resolve_components(dit_path, module_paths, processor_path):
         if item.role in resolved:
             raise H3Error(f"More than one H3 {ROLE_LABELS[item.role]} is selected.")
         resolved[item.role] = item
-    for item in resolved.values():
-        if item.quantization == "nvfp4":
-            raise H3Error("NVFP4/AWQ is not supported by this initial H3 backend. Use a compatible BF16 or INT8 ConvRot text encoder.")
-        if item.variant == "fast":
-            raise H3Error("FastH3/VSA is deferred. Select a standard H3 FL2VA checkpoint.")
+    if dit.variant == "fast":
+        raise H3Error("FastH3 checkpoints need their own sparse-attention schedule, which is not available yet. Select a standard H3 FL2VA checkpoint.")
+    if "text_encoder" in resolved and resolved["text_encoder"].quantization == "nvfp4":
+        # Forge Neo loads it without a warning, but the conditioning comes out wrong (a prompt for a bird gave a dog)
+        raise H3Error("The NVFP4 AWQ text encoder does not encode prompts correctly in Forge Neo yet. Select qwen3vl_32b_minimax_h3_int8_convrot or the bf16 text encoder.")
+    if "video_vae" in resolved and resolved["video_vae"].variant == "quantized":
+        raise H3Error("The int8 H3 video VAE is not supported yet. Select minimax_h3_video_vae_fp16 or the original FL2VA video VAE.")
     for role in ("text_encoder", "video_vae", "audio_vae"):
         if role not in resolved:
             raise H3Error(f"Select the H3 {ROLE_LABELS[role]} in Forge's VAE / Text Encoder field.")
-    processor = Path(processor_path).expanduser().resolve()
-    if not processor.is_dir() or not (processor / "tokenizer_config.json").is_file() or not (processor / "preprocessor_config.json").is_file():
-        raise H3Error("Set H3 Processor directory to the local FL2VA processor folder containing tokenizer_config.json and preprocessor_config.json.")
-    for name in ("tokenizer_config.json", "preprocessor_config.json"):
-        try:
-            config = json.loads((processor / name).read_text(encoding="utf-8"))
-        except (OSError, ValueError, UnicodeError) as exc:
-            raise H3Error(f"Invalid H3 processor configuration: {name}.") from exc
-        if not isinstance(config, dict) or not config:
-            raise H3Error(f"Incomplete H3 processor configuration: {name}.")
-    if not ((processor / "tokenizer.json").is_file()
-            or ((processor / "vocab.json").is_file() and (processor / "merges.txt").is_file())):
-        raise H3Error("H3 processor tokenizer data is missing. Copy the complete original FL2VA processor directory.")
-    return Components(processor=processor, **resolved)
+    return Components(**resolved)
