@@ -1,13 +1,13 @@
 # Installation and troubleshooting
 
-Version 0.2.0. MiniMax H3 runs on Forge Neo's own loader, samplers and memory management; the extension installs no Python packages. See the [README](../README.md) for the short version and [VALIDATION.md](../VALIDATION.md) for what was checked on a GPU.
+Version 0.3.0. MiniMax H3 runs on Forge Neo's own loader, samplers and memory management; the extension installs no Python packages. See the [README](../README.md) for the short version, [VALIDATION.md](../VALIDATION.md) for what was checked on a GPU and the [wiki](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki) for the detailed guides.
 
 ## Requirements
 
 - **Forge Neo**, `neo` branch. Tested with revision `97b26fb` (2 October 2026, reported as `neo-2.29.2`), Python 3.13, Torch 2.13 with CUDA 13.0 and comfy-kitchen 0.2.36 with its CUDA backend.
 - **FFmpeg** for the MP4 export, on the `PATH` or set in **Settings → MiniMax H3**.
 - **Disk:** about 50 GiB for the four required files.
-- **System RAM:** Forge loads the checkpoint, text encoder and VAEs together, about 50 GiB with the tested files. The A40 test machine had 50 GB; swapping the text encoder or adding a LoRA on a loaded model exceeded it once.
+- **System RAM:** Forge loads the checkpoint, text encoder and VAEs together, about 50 GiB with the tested files. The A40 test machine had about 50 GB; 15-second clips peaked at 46.3 GiB. Changing the text encoder on a loaded model exceeded it.
 - **GPU:** only an NVIDIA A40 (48 GB) was tested. With **Never OOM Integrated** (UNet always offloaded) a 158-frame 448×672 clip used about 22 GB of VRAM. Smaller cards are untested.
 
 ## Install
@@ -46,10 +46,13 @@ Links point to the Comfy-Org revision `e5eb578`. The text encoder includes the v
 | `minimax_h3_fl2va_pruned_w6a8` (14.9 GiB) | Works. |
 | `minimax_h3_fl2va_pruned_fp8_scaled` (19.5 GiB) | Works; slower than INT8 on the A40 (Ampere has no FP8 tensor cores). |
 | `minimax_h3_fl2va_int8_convrot`, the full (not pruned) DiT (31.7 GiB) | Loads in the CPU layout tests; not generated with, since it needs more system RAM. |
-| larryvrh v4 step600 ema turbo LoRA | Works. |
+| [larryvrh](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora) v4 step600 ema turbo LoRA | Works. |
+| [`fastvideo_fasth3_8step_v2_pruned_int8_convrot`](https://huggingface.co/FastVideo/FastVideo-FastH3-Comfy/resolve/main/diffusion_models/fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors) (22.1 GB) | Works at 8 steps, Shift 10, with full attention (its VSA sparse attention is not ported yet). |
+| [`minimax_h3_video_vae_int8_convrot`](https://huggingface.co/Kijai/MiniMax-H3-experimental/blob/main/minimax_h3_video_vae_int8_convrot.safetensors) (Kijai) | Works; 47.9 dB PSNR against the fp16 VAE on a test clip. |
+| H3 Eros Max beta5 (Civitai, adult-oriented), INT8 and W4A8 | Work at 8 steps without a LoRA (turbo merged in). |
 | `qwen3vl_32b_minimax_h3_nvfp4_awq` text encoder | **Refused:** it loads in Forge but encodes prompts wrongly (a bird prompt gave a dog). |
-| `minimax_h3_video_vae_int8_convrot` | **Refused:** not supported yet. |
-| FastH3 checkpoints | **Refused:** they need their own sparse-attention schedule. |
+| `minimax_h3_ref2va_*` checkpoints | **Refused:** the reference-to-video mode is not supported yet. |
+| GGUF files | Not supported. |
 
 Community files are recognized by their tensor layout, not by their name. A file called H3 on Civitai may still be another architecture or format; the extension says so when it cannot use a file.
 
@@ -69,7 +72,7 @@ Outside the h3 preset, the Shift slider belongs to the other preset (for example
 - **txt2img + ImageStitch:** last frame only.
 - Still image output does not take keyframes yet.
 
-This mode is covered by CPU tests that replay Forge's generation order; it has not run on a GPU yet.
+Checked on the A40: first, last, both, CFG 3, a turbo LoRA and Never OOM. Use 768 on the short side for clean results; see the wiki's [First and Last Frame](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/First-and-Last-Frame) page.
 
 ## Troubleshooting
 
@@ -79,8 +82,8 @@ This mode is covered by CPU tests that replay Forge's generation order; it has n
 | `Select the H3 text encoder / video VAE / audio VAE...` | Select all three components under **VAE / Text Encoder**, and only one of each. |
 | `Unrecognized H3 component` | A selected module is not an H3 file. Deselect it. |
 | `H3 width and height must be multiples of 32` / `H3 Frames must follow 17n + 5` | Use multiples of 32 for the size; the Frames slider moves in steps of 17 from 5 to 362. |
-| `The img2img input image did not reach H3` | Set **Settings → VAE → VAE type for encode** to **Full** and check the console for an earlier error. |
-| The process is killed while loading or switching models | Not enough system RAM. Close other programs, avoid switching the text encoder on a loaded model, and restart Forge before loading H3. |
+| `The img2img input image did not reach H3` | Set **Settings → VAE → VAE for Encoding** to **Full** and check the console for an earlier error. |
+| The process is killed while loading H3 or adding a LoRA | Not enough system RAM. Close other programs, restart Forge before changing the text encoder, and for long clips with a LoRA set **Diffusion in Low Bits** to **Automatic (fp16 LoRA)**. |
 | `FFmpeg is missing` / `H3 FFmpeg executable does not exist` | Install FFmpeg or set its path in **Settings → MiniMax H3**. |
 | `Select Script: None for H3 generation` | Generation scripts are not supported with H3 yet. |
 

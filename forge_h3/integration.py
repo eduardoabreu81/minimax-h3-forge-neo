@@ -152,7 +152,7 @@ def before_sampling(p, noise):
         return
     from modules import rng
     if request.first_frame and p.sd_model.first_frame is None:
-        error = H3Error("The img2img input image did not reach H3. Set Settings > VAE > VAE type for encode to Full, "
+        error = H3Error("The img2img input image did not reach H3. Set Settings > VAE > VAE for Encoding to Full, "
                         "and check the console for an earlier error.")
         set_pending_error(error)
         raise error

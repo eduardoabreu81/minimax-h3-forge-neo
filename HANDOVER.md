@@ -1,6 +1,6 @@
 # MiniMax H3 for Forge Neo: handover
 
-Updated: 2026-10-03, America/Sao_Paulo. Version 0.2.0, work in progress. The DiffSynth runtime of 0.1.2 was replaced by a native Forge Neo backend, validated on an A40 the same day. First and last frame was added afterwards and is covered by CPU tests only. This roadmap describes future work; it does not authorize paid resources.
+Updated: 2026-10-04, America/Sao_Paulo. Version 0.3.0, work in progress. H3 runs on a native Forge Neo backend (since 0.2.0). First and last frame, FastH3, community INT8/W4A8 checkpoints, Kijai's INT8 video VAE, the RGB live preview and the early release of a replaced H3 model were validated on an A40 on 2026-10-04. This roadmap describes future work; it does not authorize paid resources.
 
 ## Decisions to preserve
 
@@ -19,12 +19,13 @@ Forge Neo loads the H3 checkpoint, text encoder and both VAEs through its own lo
 
 | Evidence | Result |
 | --- | --- |
-| CPU tests | 54 tests: layouts against nine real checkpoint headers, toy forward passes, VAE round trips, keyframe tokens and Forge's generation order replayed with stand-ins |
-| T2V with audio (A40) | Bird 53.5 s (0.1.2: 312 s); laundromat 244.8 s at Euler 32 (0.1.2: 903 s), 196.9 s at Res Multistep 20; neon 15 s 1K 1628 s at Res Multistep 20 (0.1.2: 4772 s at Euler 32) |
-| Modes (A40) | Still image, audio off, CFG 3 with a negative prompt, interruption and recovery, clear errors for sizes and frames, switching to SD 1.5 and back, browser UI |
-| Files (A40) | Pruned INT8, pruned w6a8 and pruned fp8 DiTs; INT8 text encoder; Comfy-Org and original MiniMax VAEs (identical output); Comfy-Org and larryvrh turbo LoRAs |
-| Forge features (A40) | Never OOM Integrated (about 22 GB VRAM), Sparse Attention Integrated (33% faster per step on a 33k-token clip) |
-| First and last frame | CPU only: tokens, keyframe latents, layout, packed forward and the img2img/ImageStitch flow |
+| CPU tests | 61 tests: layouts against nine real checkpoint headers, toy forward passes, VAE round trips, keyframe tokens, model release, preview hooks and Forge's generation order replayed with stand-ins |
+| T2V with audio (A40) | Bird 53.5 s; laundromat 196.9 s at Res Multistep 20; neon 15 s 1K 1628 s at 20 steps; bus stop 15 s 840.8 s with the turbo LoRA on the fly |
+| First and last frame (A40) | First, last, both, CFG 3, turbo LoRA, Never OOM; non-H3 pictures at 768p followed with identity and framing |
+| Modes (A40) | Still image, audio off, CFG 3 with a negative prompt, interruption and recovery, clear errors, switching to SD 1.5 and back, RGB live preview, browser UI |
+| Files (A40) | Pruned INT8, w6a8 and fp8 DiTs; FastH3 8-step V2 INT8 (dense attention); Eros Max beta5 INT8 and W4A8; INT8 text encoder; Comfy-Org, original MiniMax and Kijai INT8 video VAEs; Comfy-Org and larryvrh turbo LoRAs |
+| Forge features (A40) | Never OOM Integrated (about 22 GB VRAM), Sparse Attention Integrated (33% faster per step on a 33k-token clip), early release of a replaced H3 (switch peak 12.4 GiB instead of 46.3) |
+| Pending | taeh3 TAESD preview on a GPU; other GPUs and less RAM |
 
 Pins: Forge Neo `97b26fb` (GPU tests), ComfyUI `e9027f2` (port source), Comfy-Org/MiniMax-H3 `e5eb578`, MiniMaxAI/MiniMax-H3 `42ed227`. Pod environment: Python 3.13, Torch 2.13 cu130, comfy-kitchen 0.2.36.
 
@@ -47,33 +48,37 @@ Pins: Forge Neo `97b26fb` (GPU tests), ComfyUI `e9027f2` (port source), Comfy-Or
 | `forge_h3/native/video_vae.py`, `audio_vae.py`, `vae.py` | VAEs and conversion of the original MiniMax files |
 | `forge_h3/native/streams.py` | Packed video+audio latent, generation state, token tags |
 | `forge_h3/native/presets.py` | The h3 UI preset |
+| `forge_h3/native/release.py` | Early release of a replaced H3 model |
+| `forge_h3/native/taeh3.py` | taeh3 preview decoder for Forge's TAESD live preview |
 | `tests/` | CPU tests; `forge_stubs.py` stands in for Forge Neo |
 
 ## Next work, in order
 
-### 1. GPU session
+### 1. Two-stage video (hires fix)
 
-Follow [docs/RUNPOD_SMOKE.md](docs/RUNPOD_SMOKE.md): T2V regression, first frame, last frame, first and last, a non-H3 first frame, CFG 3 with keyframes, turbo at 8/12 steps and Shift 6, RAM peaks, browser check. Reproduce any failure with a CPU test before fixing it.
+A low-resolution draft, then `MinimaxH3LatentUpscaler3D` (LBH-123-AI, MIT, a 3D conv fp16 model) and a short refinement (about 6 steps, denoise 0.4), as in the Seed Hunter workflow. It needs an H3 version of Forge's hires pass for the packed latent: shapes, noise, keyframes and audio.
 
-### 2. Memory
+### 2. Speed
 
-- Load the text encoder only to encode the prompt. Forge loads checkpoint, text encoder and VAEs together, about 50 GiB with the tested files (DiT 19.5, text encoder 25.3, VAEs 5.4); releasing the text encoder after encoding helps while sampling but not the load peak. Measure with limited RAM on the Pod first.
+- Turbo and FastH3 presets (8 steps; Shift 6 / 10) with a warning below 544p.
+- LoRA: Forge computes LoRA-patched INT8 layers in full precision (`forge_force_cast_weights`), about 42-50% slower per step. Work around it in the extension only.
+- FastH3's VSA (BlockSparseAttention); SageAttention (needs a cu130 build); sparse attention that keeps text and audio rows exact, as ComfyUI does.
+- Configurable audio shift (fixed at 3; Seed Hunter uses 6).
+- Find why the taeh3 TAESD preview captured nothing on the GPU.
+
+### 3. Memory
+
+- Load the text encoder only to encode the prompt. Forge loads checkpoint, text encoder and VAEs together, about 50 GiB (DiT 19.5, text encoder 25.3, VAEs 5.4); 15-second clips peak at 46.3 GiB. Releasing the text encoder after encoding helps while sampling but not the load peak. Measure with limited RAM on the Pod first.
 - 24 GB cards with Never OOM, then smaller.
-
-### 3. Speed
-
-- LoRA: Forge computes LoRA-patched INT8 layers in full precision (`forge_force_cast_weights`), about 50% slower per step. Work around it in the extension only.
-- Turbo presets: 8 steps (draft) and 12 (speech), Shift 6 for the 768p LoRA.
-- Live preview of the packed latent (`latent_rgb_factors` or the `taeh3` TAE); today Forge swallows the preview errors.
-- SageAttention (needs a cu130 build); keep text and audio rows exact with sparse attention, as ComfyUI does.
+- A separate extension that releases replaced models early for any architecture (Wan 2.2 A14B, Flux, Qwen-Image).
 
 ### 4. More files
 
-NVFP4 AWQ text encoder (refused: wrong conditioning in Forge), INT8 video VAE (refused), full INT8 DiT (needs more RAM), GGUF, W4A8. Each needs its own GPU check before it is listed.
+NVFP4 AWQ text encoder (refused: wrong conditioning in Forge) or community INT4 text encoders, full INT8 DiT (needs more RAM), GGUF, INT8 LoRA repacks. Each needs its own GPU check before it is listed.
 
 ### 5. More conditioning
 
-Multiple references (Ref2VA), uploaded audio during sampling, the PDD LoRA bank, FastH3 (its own sparse-attention schedule), image editing with a first frame and Still image.
+Multiple references (Ref2VA), uploaded audio during sampling, the PDD LoRA bank, image editing with a first frame, Still image with keyframes.
 
 ## Continuing locally
 
@@ -86,4 +91,4 @@ The native tests need Torch and comfy-kitchen. Keep upgrades, new architectures 
 
 ## Publication boundary
 
-Public files hold code, English documentation, portable benchmarks, the owner's prompts and the examples. The [user wiki](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki) has usage guidance and the public roadmap; update it together with the repository when verified capabilities change. Session logs, access details, raw configuration and supplied workflow archives stay in the Git-ignored `.local/` archive. Publishing does not create a release, a tag or GPU resources.
+Public files hold code and English documentation. The example videos, their prompts and the measurements live in the wiki repository (`media/`), so the extension clone stays small. The [user wiki](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki) has usage guidance and the public roadmap; update it together with the repository when verified capabilities change. Session logs, access details, raw configuration and supplied workflow archives stay in the Git-ignored `.local/` archive. Publishing does not create a release, a tag or GPU resources.

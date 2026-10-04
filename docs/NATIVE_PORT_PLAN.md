@@ -102,7 +102,7 @@ From this repository we keep the H3 panel and UI binding, `contracts.py` (Frames
 - Port `comfy/ldm/minimax/model.py` (790 lines) to `forge_h3/native/dit.py`: `comfy.ops` to Forge operations, `comfy.quant_ops.ck` to `backend.quant_ops.ck`, `optimized_attention` to `backend.attention.attention_function`; drop `model_prefetch` and patcher wrappers. Keep both adaLN forms (time embedder and `adaln_t_table` curves of the pruned files) and the PDD head bank.
 - Port the 32B text encoder config and the H3 tokenizer presentation (raw prompt, extra special tokens, token tags).
 - Register the model; configs under `forge_h3/huggingface/MiniMax-H3/`.
-- Exit: CPU tests build the modules on the meta device and match every key and shape of the tested headers (`docs/HEADER_INSPECTION.json`) for the pruned int8 DiT, int8 and NVFP4 text encoders.
+- Exit: CPU tests build the modules on the meta device and match every key and shape of the tested headers (`tests/fixtures/h3_headers.json.gz`) for the pruned int8 DiT, int8 and NVFP4 text encoders.
 
 ### 2. Engine, packed latent and sampling (first GPU smoke)
 
