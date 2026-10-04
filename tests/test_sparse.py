@@ -150,9 +150,10 @@ class SparseTests(unittest.TestCase):
         self.assertEqual(set(attention.pooled), {(0, layout.seq_len, 0), (1, layout.seq_len, 0)})
 
     def test_prompt_and_negative_prompt_keep_their_own_statistics(self):
+        from test_native import tiny_dit
+
         from forge_h3.native import sparse
         from forge_h3.native.streams import Generation, stream_shapes
-        from test_native import tiny_dit
         model = tiny_dit(17)
         shapes = stream_shapes(frames=22, width=96, height=64)
         attention = sparse.SparseAttention(min_tokens=0)
