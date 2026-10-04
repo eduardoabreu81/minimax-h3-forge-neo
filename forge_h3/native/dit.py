@@ -14,7 +14,7 @@ import math
 import torch
 import torch.nn as nn
 
-from . import kernels
+from . import kernels, sparse
 from .layout import time_shift_sigma
 
 # modality tags of the adaLN rows: each timestep has three rows (video, text, audio)
@@ -62,6 +62,12 @@ class Attention(nn.Module):
             self.to_gate_compress = nn.Linear(hidden, inner, bias=False, dtype=dtype, device=device)
 
     def forward(self, x, rope_freqs=None, transformer_options=None):
+        sparse_attention = (transformer_options or {}).get("minimax_h3_sparse")
+        if sparse_attention is not None:
+            # H3's own sparse path (native/sparse.py) replaces Forge's Sparse Attention Integrated override
+            if sparse_attention.eligible(self, x, rope_freqs, transformer_options):
+                return sparse_attention.attention(self, x, rope_freqs, transformer_options)
+            transformer_options = sparse.dense_options(transformer_options)
         s = x.shape[0]
         q, k, v = self.qkv_proj(x).split(self.heads * self.head_dim, dim=-1)
         v = v.view(s, self.heads, self.head_dim)

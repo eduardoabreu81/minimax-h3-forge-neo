@@ -95,8 +95,8 @@ def _before_process(p, output, include_audio, audio_shift):
     components = resolve_components(info.filename, module_paths(overrides.get("forge_additional_modules", shared.opts.forge_additional_modules)))
     p.h3_fast = components.dit.variant == "fast"
     if p.h3_fast:
-        # its recipe: 8 steps, video shift 10 (audio 3), VSA sparse attention, which is not ported yet: attention stays dense
-        print("[MiniMax H3] FastH3 checkpoint: use 8 steps and Shift 10; it runs with dense attention for now")
+        # its recipe: 8 steps, video shift 10 (audio 3), and the VSA sparse attention it was trained with
+        print("[MiniMax H3] FastH3 checkpoint: use 8 steps and Shift 10; turn on Sparse Attention Integrated for its VSA attention")
     last = keyframes.last_frame(p, p.width, p.height)
     request = GenerationRequest(width=p.width, height=p.height, frames=p.batch_size, output=output, include_audio=include_audio,
                                 first_frame=is_img2img, last_frame=last is not None, audio_shift=audio_shift)
@@ -160,6 +160,7 @@ def before_sampling(p, noise):
         set_pending_error(error)
         raise error
     shape = p.sd_model.prepare(request.frames, request.width, request.height, int(p.seeds[0]))
+    _set_sparse_attention(p)
     # Forge made p.rng for an image latent; the samplers that add noise on the way (ancestral, SDE, res_multistep)
     # draw from it too, so it has to give the packed shape
     p.rng = rng.ImageRNG(shape, p.seeds, subseeds=p.subseeds, subseed_strength=p.subseed_strength,
@@ -169,6 +170,20 @@ def before_sampling(p, noise):
         # img2img samples from init_latent at full denoise; the packed start is pure noise
         p.init_latent = torch.zeros_like(p.modified_noise)
     patches.begin_sampling()
+
+
+def _set_sparse_attention(p):
+    """With Sparse Attention Integrated on, H3 runs its own version of it: the conditioning and generated-audio rows
+    stay exact, and FastH3 uses the VSA tiling it was trained with (native/sparse.py)."""
+    from .native import sparse
+    settings = sparse.script_settings(p)
+    if settings is None:
+        return
+    vsa = getattr(p, "h3_fast", False)
+    predictor = p.sd_model.forge_objects.unet.model.predictor
+    p.sd_model.generation.sparse = sparse.from_settings(settings, predictor.percent_to_sigma, vsa=vsa)
+    mode = "VSA, as FastH3 was trained" if vsa else "text, keyframe and audio rows exact"
+    print(f"[MiniMax H3] Sparse Attention Integrated: H3 sparse attention ({mode})")
 
 
 def after_sampling(p):

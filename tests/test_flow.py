@@ -133,7 +133,8 @@ class FlowTests(unittest.TestCase):
         engine.forge_objects = types.SimpleNamespace(
             vae=types.SimpleNamespace(patcher=None, device="cpu", vae_dtype=torch.float32,
                                       first_stage_model=video_vae.requires_grad_(False)),
-            unet=types.SimpleNamespace(model=types.SimpleNamespace(diffusion_model=dit)),
+            unet=types.SimpleNamespace(model=types.SimpleNamespace(
+                diffusion_model=dit, predictor=types.SimpleNamespace(percent_to_sigma=lambda percent: 1.0 - percent))),
             clip=types.SimpleNamespace(patcher=None))
         engine.text_processing_engine_h3 = FakeTextEngine()
         engine.is_h3, engine.video_shift, engine.generation = True, 12.0, None
@@ -192,6 +193,29 @@ class FlowTests(unittest.TestCase):
         self.assertEqual((dit.sigma_shift_audio, self.engine.generation.audio_scale), (6.0, 2.0))
         out = dit(p.modified_noise, torch.tensor([900.0]), cond[0].unsqueeze(0))
         self.assertTrue(torch.isfinite(out).all())
+
+    def test_sparse_attention_integrated_turns_on_the_h3_path(self):
+        from forge_h3.native import sparse
+        p = Txt2Img()
+        self.run_until_sampling(p)
+        self.assertIsNone(self.engine.generation.sparse)
+        p = Txt2Img()
+        start = len(p.script_args)
+        p.script_args += [True, 1.5, (0.2, 0.9), 0, 0, "", False]
+        p.scripts.alwayson_scripts.append(Script(sparse.SPARSE_SCRIPT, start, start + 7))
+        cond = self.run_until_sampling(p)
+        attention = self.engine.generation.sparse
+        self.assertEqual((attention.tau, attention.vsa), (1.5, False))
+        self.assertAlmostEqual(attention.sigma_start, 0.8)
+        # on CPU the kernel is unavailable: every block falls back to dense attention and the step still runs
+        dit = self.engine.forge_objects.unet.model.diffusion_model
+        out = dit(p.modified_noise, torch.tensor([900.0]), cond[0].unsqueeze(0))
+        self.assertTrue(torch.isfinite(out).all())
+        # a FastH3 checkpoint (recognized in before_process) takes the VSA tiling it was trained with
+        p.h3_fast = True
+        integration._set_sparse_attention(p)
+        attention = self.engine.generation.sparse
+        self.assertEqual((attention.vsa, attention.topk_ratio), (True, sparse.VSA_KEEP_RATIO))
 
     def test_txt2img_gallery_is_the_last_frame_only(self):
         p = Txt2Img(gallery=Image.new("RGB", (64, 64), "green"))

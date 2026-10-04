@@ -70,5 +70,7 @@ class Generation:
     keyframes: list = field(default_factory=list)
     # vision block token ranges of the prompt, which the DiT tags as video modality
     vision_spans: list = field(default_factory=list)
+    # H3's sparse attention for this request (native/sparse.py), when Sparse Attention Integrated is on
+    sparse: object | None = None
     frames: torch.Tensor | None = None    # [T, 3, H, W] float in [0, 1], after decoding
     waveform: torch.Tensor | None = None  # [2, samples] float in [-1, 1], after decoding

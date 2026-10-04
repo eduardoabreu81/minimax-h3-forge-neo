@@ -183,6 +183,8 @@ class MiniMaxH3Model(nn.Module):
         if tags is not None:
             payload["text_token_tags"] = tags
         options = {**transformer_options, "sample_sigmas": transformer_options.get("sampling_sigmas")}
+        if generation.sparse is not None:
+            options["minimax_h3_sparse"] = generation.sparse
         outputs = []
         for i in range(x.shape[0]):
             video, audio = shapes.unpack(x[i:i + 1])
