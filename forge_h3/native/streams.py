@@ -4,7 +4,7 @@ Forge's sampler works on one tensor; ComfyUI packs the two streams the same way 
 """
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import torch
 
@@ -36,6 +36,16 @@ class StreamShapes:
         return flat[:, :n].reshape(b, *self.video[1:]), flat[:, n:].reshape(b, *self.audio[1:])
 
 
+def text_token_tags(text_len: int, spans) -> torch.Tensor | None:
+    """adaLN modality tag of every prompt token: 1 for text, 0 inside the vision blocks; None without images."""
+    if not spans:
+        return None
+    tags = torch.ones(text_len, dtype=torch.long)
+    for start, stop in spans:
+        tags[start:min(stop, text_len)] = 0
+    return tags
+
+
 def stream_shapes(frames: int, width: int, height: int) -> StreamShapes:
     audio_t = round(frames / FPS * AUDIO_LATENTS_PER_SECOND)
     return StreamShapes(video=(1, 24, latent_frames(frames), height // SPATIAL, width // SPATIAL), audio=(1, 32, 2, audio_t))
@@ -47,5 +57,9 @@ class Generation:
     shapes: StreamShapes
     seed: int
     audio_scale: float
+    # FL2VA keyframes: {"resolved_frame_index": pixel frame, "latent": [1, 24, 1, H/16, W/16]}, first frame first
+    keyframes: list = field(default_factory=list)
+    # vision block token ranges of the prompt, which the DiT tags as video modality
+    vision_spans: list = field(default_factory=list)
     frames: torch.Tensor | None = None    # [T, 3, H, W] float in [0, 1], after decoding
     waveform: torch.Tensor | None = None  # [2, samples] float in [-1, 1], after decoding

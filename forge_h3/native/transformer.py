@@ -33,6 +33,7 @@ from .layout import (
     unpack_audio,
     unpatchify_video,
 )
+from .streams import text_token_tags
 
 # packed layouts kept per text length; the prompt and the negative prompt need one each
 LAYOUT_CACHE_SIZE = 4
@@ -171,25 +172,35 @@ class MiniMaxH3Model(nn.Module):
             raise RuntimeError("[MiniMax H3] the H3 settings were not applied to this generation; "
                                "check the console for an earlier MiniMax H3 message")
         shapes = generation.shapes
-        payload = {"audio_scale": generation.audio_scale, "seed": generation.seed}
+        text_len = context.shape[1]
+        # as ComfyUI's model_base.MiniMaxH3.extra_conds: the keyframe latents ride as condition rows, never denoised
+        payload = {"audio_scale": generation.audio_scale, "seed": generation.seed,
+                   "layout": self._layout(text_len, shapes, generation.keyframes)}
+        if generation.keyframes:
+            payload["keyframes"] = generation.keyframes
+            payload["cond_video_latents"] = [kf["latent"] for kf in generation.keyframes]
+        tags = text_token_tags(text_len, generation.vision_spans)
+        if tags is not None:
+            payload["text_token_tags"] = tags
         options = {**transformer_options, "sample_sigmas": transformer_options.get("sampling_sigmas")}
         outputs = []
         for i in range(x.shape[0]):
             video, audio = shapes.unpack(x[i:i + 1])
             v, a = self.forward_streams([video, audio], timestep[i:i + 1], context[i:i + 1], options,
-                                        minimax_payload={**payload, "layout": self._layout(context.shape[1], shapes)})
+                                        minimax_payload=payload)
             outputs.append(shapes.pack(v, a))
         return torch.cat(outputs)
 
-    def _layout(self, text_len, shapes):
-        # one layout per text length (prompt and negative prompt differ), rebuilt when the shapes change
+    def _layout(self, text_len, shapes, keyframes=()):
+        # one layout per text length (prompt and negative prompt differ), rebuilt when the shapes or keyframes change
         _, _, latent_t, lat_h, lat_w = shapes.video
         signature = (text_len, latent_t, lat_h + lat_h % 2, lat_w + lat_w % 2, shapes.audio[-1])
-        if signature not in self._layouts:
+        key = signature + tuple((kf["resolved_frame_index"], tuple(kf["latent"].shape)) for kf in keyframes)
+        if key not in self._layouts:
             if len(self._layouts) >= LAYOUT_CACHE_SIZE:
                 self._layouts.clear()
-            self._layouts[signature] = PackedLayout(*signature)
-        return self._layouts[signature]
+            self._layouts[key] = PackedLayout(*signature, keyframes=list(keyframes) or None)
+        return self._layouts[key]
 
     def forward_streams(self, x, timestep, context, transformer_options={}, minimax_payload=None,
                         denoise_mask=None, audio_denoise_mask=None, **kwargs):

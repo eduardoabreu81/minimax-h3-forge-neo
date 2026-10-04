@@ -1,5 +1,8 @@
 # Measured Runpod benchmarks
 
+> [!NOTE]
+> These records are from version 0.1.2 and its DiffSynth runtime. The native backend of 0.2.0 ran the same prompts 3.7x to 5.8x faster; its measurements are in [NATIVE_PORT_PLAN.md](NATIVE_PORT_PLAN.md#results-2026-10-03-runpod-a40-50-gb-ram).
+
 Date: 2026-10-02. Experimental extension 0.1.2. These records describe concrete runs through Forge's authenticated txt2img Generate callback. They are not guarantees for other models, hardware or larger settings.
 
 ## Environment

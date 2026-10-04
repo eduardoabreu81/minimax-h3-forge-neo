@@ -1,4 +1,4 @@
-"""MiniMax H3 diffusion engine for Forge Neo: text-to-video with audio.
+"""MiniMax H3 diffusion engine for Forge Neo: text-to-video and first/last-frame-to-video, with audio.
 
 Video [1, 24, T, H/16, W/16] and audio [1, 32, 2, T40] latents travel through Forge's sampler packed into one flat
 tensor [1, 1, 1, N], as ComfyUI does (comfy.utils.pack_latents). The script sets up a generation with prepare(), which
@@ -61,6 +61,20 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         self.video_shift = VIDEO_SHIFT
         self.generation: Generation | None = None
 
+        # FL2VA keyframes, (1, H, W, 3) in [0, 1] at the output size: the first frame comes from img2img's input image
+        # (encode_first_stage, during Forge's img2img init), the last one from the script; both cleared per generation
+        self.first_frame: torch.Tensor | None = None
+        self.last_frame: torch.Tensor | None = None
+
+    def set_keyframes(self, last_frame: torch.Tensor | None = None) -> None:
+        """Called by the script for every H3 generation, before Forge's img2img init brings the first frame."""
+        self.first_frame = None
+        self.last_frame = last_frame
+
+    def keyframe_images(self) -> list[torch.Tensor]:
+        """The keyframes in prompt order ("<Picture 1>" is the first frame when there is one)."""
+        return [image for image in (self.first_frame, self.last_frame) if image is not None]
+
     def set_shift(self, shift):
         shift = float(shift) if shift and shift > 0 else VIDEO_SHIFT
         super().set_shift(shift)
@@ -70,9 +84,30 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
     def prepare(self, frames: int, width: int, height: int, seed: int) -> tuple[int, ...]:
         """Start a generation: remember its shapes; returns the shape of the packed latent (without the batch)."""
         shapes = stream_shapes(frames, width, height)
-        self.generation = Generation(shapes=shapes, seed=seed, audio_scale=self.video_shift / AUDIO_SHIFT)
+        indices = [index for index, image in ((0, self.first_frame), (frames - 1, self.last_frame)) if image is not None]
+        keyframes = [{"resolved_frame_index": index, "latent": latent}
+                     for index, latent in zip(indices, self._encode_keyframes(width, height))]
+        self.generation = Generation(shapes=shapes, seed=seed, audio_scale=self.video_shift / AUDIO_SHIFT,
+                                     keyframes=keyframes, vision_spans=list(self.text_processing_engine_h3.vision_spans))
         self.forge_objects.unet.model.diffusion_model.generation = self.generation
         return (1, 1, shapes.video_size + math.prod(shapes.audio[1:]))
+
+    @torch.inference_mode()
+    def _encode_keyframes(self, width: int, height: int) -> list[torch.Tensor]:
+        # each keyframe on its own, one latent frame [1, 24, 1, H/16, W/16] (ComfyUI vae.encode of one image)
+        images = self.keyframe_images()
+        if not images:
+            return []
+        video_vae = self.forge_objects.vae
+        memory_management.load_model_gpu(video_vae.patcher)
+        latents = []
+        for image in images:
+            if tuple(image.shape[1:3]) != (height, width):
+                raise RuntimeError(f"[MiniMax H3] a keyframe is {image.shape[2]}x{image.shape[1]}, not {width}x{height}")
+            pixels = image.movedim(-1, 1).unsqueeze(2).mul(2.0).sub(1.0)  # [1, 3, 1, H, W] in [-1, 1]
+            latent = video_vae.first_stage_model.encode(pixels.to(video_vae.device, video_vae.vae_dtype))
+            latents.append(latent.float().cpu())
+        return latents
 
     def release_generation(self) -> None:
         """Drop the decoded frames and waveform once the script has written them."""
@@ -83,7 +118,8 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
     def get_learned_conditioning(self, prompt: list[str]):
         raise_pending_error()
         memory_management.load_model_gpu(self.forge_objects.clip.patcher)
-        return self.text_processing_engine_h3(prompt)
+        # the same keyframes for the prompt and the negative prompt: they come before either text
+        return self.text_processing_engine_h3(prompt, images=self.keyframe_images())
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str) -> tuple[int, int]:
@@ -92,7 +128,11 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
 
     @torch.inference_mode()
     def encode_first_stage(self, x: torch.Tensor):
-        raise NotImplementedError("[MiniMax H3] image-to-video is not available in the native backend yet")
+        # Forge's img2img init hands over the input image, already resized to the output; as Wan's start_image it
+        # becomes the first keyframe, and the placeholder latent is replaced by the packed one before sampling
+        raise_pending_error()
+        self.first_frame = x[:1].float().mul(0.5).add(0.5).clamp(0.0, 1.0).movedim(1, -1).cpu()
+        return torch.zeros((1, 1, 1, 1), device=x.device)
 
     @torch.inference_mode()
     def decode_first_stage(self, x: torch.Tensor):

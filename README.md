@@ -3,7 +3,7 @@
 <div align="center">
 
 [![Forge Neo](https://img.shields.io/badge/Forge-Neo-blue)](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)
-[![Version](https://img.shields.io/badge/Version-0.1.2-brightgreen)](https://github.com/eduardoabreu81/minimax-h3-forge-neo)
+[![Version](https://img.shields.io/badge/Version-0.2.0-brightgreen)](https://github.com/eduardoabreu81/minimax-h3-forge-neo)
 ![Status](https://img.shields.io/badge/Status-Work_in_progress-orange)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-green)](LICENSE)
 
@@ -11,11 +11,14 @@
 
 </div>
 
-Generate **videos with sound** inside Forge Neo, using the checkpoint selectors, prompt and **Generate** button you already know. MiniMax H3 lives in a small collapsible panel in the existing interface.
+Generate **videos with sound** inside Forge Neo, using the checkpoint selectors, prompt and **Generate** button you already know. MiniMax H3 runs on Forge Neo's own loader, samplers and memory management, with a small collapsible panel in the existing interface.
 
 > [!IMPORTANT]
-> **Work in progress. Text-to-video (T2V) with generated audio is already working.**
-> Three real generations have passed video/audio checks on an NVIDIA A40. The tested setup uses the standard H3 INT8 model and text encoder with the original FL2VA VAEs. More modes and model variants are still being developed and validated.
+> **Work in progress. Text-to-video (T2V) with generated audio works.**
+> Version 0.2.0 was checked on an NVIDIA A40 with the standard H3 INT8 model and text encoder and the Comfy-Org VAEs. **First and last frame** (image-to-video) is new in this version and still waits for its first real GPU check.
+
+> [!NOTE]
+> The extension needs an up-to-date **Forge Neo** (the `neo` branch; tested with revision `97b26fb` of 2 October 2026). On an older version it stays disabled and says why in the console; Forge Neo itself keeps working as usual.
 
 ---
 
@@ -26,7 +29,7 @@ Generate **videos with sound** inside Forge Neo, using the checkpoint selectors,
 - [Examples](#examples)
 - [Wiki](#wiki)
 - [Installation](#installation)
-- [Settings](#settings)
+- [Recommended Settings](#recommended-settings)
 - [Tips](#tips)
 - [Current Limits](#current-limits)
 - [Credits](#credits)
@@ -35,31 +38,61 @@ Generate **videos with sound** inside Forge Neo, using the checkpoint selectors,
 
 ## What's New
 
+### v0.2.0 - Native Forge Neo backend
+
+- **3.7x to 5.8x faster** than 0.1.2 at the same settings: the bird test went from 5 min 12 s to 53.5 s, the six-second laundromat from 15 min to 4 min.
+- **No extra packages.** H3 now runs on what Forge Neo already ships; nothing is installed at startup.
+- **Comfy-Org VAEs** load as they are, and so do the original MiniMax ones.
+- **h3 UI preset** with the reference settings, and the **Shift** slider as the video flow shift.
+- **Turbo LoRAs** through Forge's usual `<lora:name:weight>` syntax.
+- **Still image** and **video without audio** checked on the GPU.
+- **First and last frame:** the img2img input image becomes the first frame; a last frame comes from Forge Neo's **ImageStitch Integrated** gallery. Awaiting its first GPU check.
+
 ### v0.1.2 - First Public Preview
 
-- **Text-to-video with sound** through Forge's existing Generate action.
-- **Automatic runtime setup** through Forge's extension installer, with core package versions protected.
-- **Native controls** for prompt, models, resolution, seed, CFG and Steps.
-- **Frames control** in place of Batch Size while H3 video output is selected.
-- **Automatic and Economical memory options** in the H3 panel.
-- **Three real A40 tests**, including a 1K vertical fantasy scene and a six-second laundromat scene.
+- Text-to-video with sound through Forge's Generate action, on a DiffSynth runtime installed by the extension.
 
 ## Features
 
 ### 🔊 Video and Audio Together
 
-Describe the scene and its sounds in the same prompt. H3 generates video and audio together and saves an MP4 that plays in Forge's usual result area.
+Describe the scene and its sounds in the same prompt. H3 generates video and audio together and saves an MP4 that plays in Forge's usual result area, with a JSON sidecar that records the settings.
 
-The **Include generated audio** checkbox controls whether sound is included in the exported video. Turning it off does not skip the model's audio computation.
+The **Include generated audio** checkbox controls whether sound goes into the MP4. Turning it off does not skip the model's audio computation.
 
 ### 🎛️ Familiar Forge Controls
 
-- Select the H3 checkpoint in the normal checkpoint selector.
-- Select its text encoder and both VAEs under **VAE / Text Encoder**.
-- Write the prompt, choose a size and click **Generate**.
-- Open the **MiniMax H3** panel for Output, audio, memory usage and the component summary.
+- Select the H3 checkpoint in the normal checkpoint selector, and its text encoder and both VAEs under **VAE / Text Encoder**.
+- Pick the **h3** UI preset for the reference sampler, schedule, steps, CFG and Shift.
+- **Frames** takes the place of Batch Size and shows the duration. **Frames controls video length; Steps controls denoising.**
+- The **MiniMax H3** panel holds Output (Video or Still image) and the audio checkbox. No new tab, no separate ComfyUI server.
 
-**Frames controls video length. Steps controls denoising.** They remain separate. No new generation tab or running ComfyUI server is required.
+### 🖼️ First and Last Frame (preview)
+
+The same way Forge Neo does it for Wan 2.2:
+
+- **img2img:** the input image is the **first frame**. Forge resizes it with its usual Resize mode; Denoising strength is not used, since H3 generates the whole clip.
+- **Last frame:** turn on **ImageStitch Integrated**, which Forge Neo already has, and add one image to its gallery. In img2img you get first and last frame; in txt2img, last frame only.
+- The images condition the generation the way the model was trained, as in ComfyUI's MiniMax H3 Image to Video node.
+
+This is implemented and covered by CPU tests; the first real generations are the next GPU check.
+
+### ⚡ Turbo LoRAs
+
+- The Comfy-Org turbo LoRA (8 steps) and larryvrh's v4 turbo LoRA were checked; the laundromat clip drops from 197 s at 20 steps to 108 s at 8 steps.
+- Turbo at 8 steps weakens the sound and can invent signage text; 12 steps or more keeps speech usable.
+
+### 🧠 Forge Memory Management
+
+- The model stays loaded between generations, like any Forge checkpoint.
+- **Never OOM Integrated** (UNet always offloaded) ran the laundromat clip in about 22 GB of VRAM, 12% slower.
+- **Sparse Attention Integrated** made long clips about 33% faster per step; listen to the result before relying on it.
+
+### 🛡️ Safe by Design
+
+- Changes no Forge Neo file; remove the extension and everything is as it was.
+- Checks your Forge Neo at startup and stays disabled if something it needs is missing.
+- Other models are not affected, and switching between H3 and ordinary checkpoints works both ways.
 
 ## Examples
 
@@ -70,19 +103,17 @@ Both examples below were generated inside Forge Neo with audio. Click an image t
 | [![A doorway opens onto giant flowers](.github/images/neon-door-15s.jpg)](.github/media/neon-door-15s.mp4) | [![A dog emerges with water from a washing machine](.github/images/laundromat-6s.jpg)](.github/media/laundromat-6s.mp4) |
 | [Watch the 15-second video](.github/media/neon-door-15s.mp4) | [Watch the 6-second video](.github/media/laundromat-6s.mp4) |
 
-Measured on **one NVIDIA A40, 48 GB advertised VRAM**, using the standard INT8 model set:
+These two clips were made with 0.1.2 and the same model files; the [first bird clip](.github/media/bird-smoke-test.mp4) too. Times with the native backend, on **one NVIDIA A40 (48 GB) with 50 GB of system RAM**, model loading included:
 
-| Test | Delivered video | Steps | Generation time | Sampled GPU memory peak |
-| --- | --- | ---: | ---: | ---: |
-| Bird smoke test | 640×384, about 0.92 s | 20 | 5 min 12 s | 24.3 GiB |
-| Neon alley | 576×1024, 15 s | 32 | 79 min 32 s | 26.1 GiB |
-| Laundromat | 440×652, 6 s | 32 | 15 min 3 s | 24.6 GiB |
+| Test | Size and frames | Settings | 0.1.2 | 0.2.0 |
+| --- | --- | --- | ---: | ---: |
+| Bird | 640×384, 22 frames | Euler, 20 steps | 5 min 12 s | 53.5 s |
+| Laundromat | 448×672, 158 frames | Euler, 32 steps | 15 min 3 s | 4 min 5 s |
+| Laundromat | 448×672, 158 frames | Res Multistep, 20 steps | | 3 min 17 s |
+| Laundromat | 448×672, 158 frames | Turbo LoRA, 8 steps | | 1 min 48 s |
+| Neon alley | 576×1024, 362 frames | 0.1.2: Euler, 32 steps; 0.2.0: Res Multistep, 20 steps | 79 min 32 s | 27 min 8 s |
 
-All clips use **24 FPS and stereo audio**. The longer examples were trimmed for exact delivery duration; the laundromat was also cropped slightly to the requested size. Native H3 output follows the size and frame rules below. These finishing edits are not automatic extension features.
-
-Video generation is still demanding. These are measured examples, with loading, generation and native export included in the times, rather than speed guarantees. Full prompts, settings, model hashes and environment details are in the [benchmarks](docs/BENCHMARKS.md) and the [six-second test](docs/LAUNDROMAT_6S_BENCHMARK.md).
-
-The [first bird clip with audio](.github/media/bird-smoke-test.mp4) is also available: 640×384, 22 frames and about 0.92 seconds. It was a short installation check, rather than a finished showcase. See its [wiki page](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Bird-Smoke-Test) for the prompt and exact settings.
+All clips use **24 FPS and stereo audio**. These are measured examples, not speed guarantees. Prompts, settings and model hashes are in the [benchmarks](docs/BENCHMARKS.md) and the [native backend notes](docs/NATIVE_PORT_PLAN.md).
 
 ## Wiki
 
@@ -90,44 +121,36 @@ Visit the [user wiki](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wik
 
 ## Installation
 
-This preview installs its runtime dependencies automatically and needs local model files. Generation was tested with Forge Neo revision `97b26fb`.
-
 1. Open Forge Neo and go to **Extensions → Install from URL**.
 2. Paste `https://github.com/eduardoabreu81/minimax-h3-forge-neo`, click **Install**, then restart the WebUI.
-3. Allow the first startup to finish installing the H3 dependencies. This uses Forge's Python environment, needs internet access and preserves its core package versions. Later startups skip installation when the required packages are present. If setup reports an incompatibility, use the [setup and troubleshooting guide](docs/INSTALLATION.md#install-on-forge-neo) before downloading the large models.
+3. Place the tested files in Forge's model folders:
 
-4. Place the following tested files in Forge's model folders:
-
-   | Part | Tested file or assets | Folder |
+   | Part | Tested file | Folder |
    | --- | --- | --- |
-   | H3 checkpoint | [FL2VA pruned INT8 ConvRot](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/e5eb578a89295337b8ff433a035929ce0279e0b6/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors) | `models/Stable-diffusion` |
-   | Text encoder | [Qwen3-VL H3 INT8 ConvRot](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/e5eb578a89295337b8ff433a035929ce0279e0b6/text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors) | `models/text_encoder` |
-   | Video VAE | [Original FL2VA video VAE](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/42ed227ee7df40d41602854ae760620d6eb651fe/FL2VA/video_vae/source/model.safetensors) | `models/VAE` |
-   | Audio VAE | [Original FL2VA audio VAE](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/42ed227ee7df40d41602854ae760620d6eb651fe/FL2VA/audio_vae/model.safetensors) | `models/VAE` |
-   | Processor and tokenizer | [Complete original FL2VA processor directory](https://huggingface.co/MiniMaxAI/MiniMax-H3/tree/42ed227ee7df40d41602854ae760620d6eb651fe/FL2VA/processor) | `models/H3/processor` |
+   | H3 checkpoint | [minimax_h3_fl2va_pruned_int8_convrot](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/e5eb578a89295337b8ff433a035929ce0279e0b6/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors) | `models/Stable-diffusion` |
+   | Text encoder | [qwen3vl_32b_minimax_h3_int8_convrot](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/e5eb578a89295337b8ff433a035929ce0279e0b6/text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors) | `models/text_encoder` |
+   | Video VAE | [minimax_h3_video_vae_fp16](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/e5eb578a89295337b8ff433a035929ce0279e0b6/vae/minimax_h3_video_vae_fp16.safetensors) | `models/VAE` |
+   | Audio VAE | [minimax_h3_audio_vae_fp32](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/e5eb578a89295337b8ff433a035929ce0279e0b6/vae/minimax_h3_audio_vae_fp32.safetensors) | `models/VAE` |
+   | Turbo LoRA (optional) | [minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/e5eb578a89295337b8ff433a035929ce0279e0b6/loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors) | `models/Lora` |
 
-   The four weight files total approximately **55 GiB**. The two VAEs are both named `model.safetensors` at their source; give them distinct filenames, such as `minimax_h3_original_video_vae.safetensors` and `minimax_h3_original_audio_vae.safetensors`.
+   The four required files total about **50 GiB**. The original MiniMax FL2VA video and audio VAEs work too, with identical output.
 
-5. Make sure **FFmpeg** is available. Restart Forge, refresh the model list and select the checkpoint plus **all three** additional components under **VAE / Text Encoder**.
-6. In txt2img, choose **Video**, enable **Include generated audio**, set the controls below and click **Generate**.
+4. Make sure **FFmpeg** is available (or set its path in **Settings → MiniMax H3**).
+5. Pick the **h3** UI preset, select the checkpoint, and select **all three** components under **VAE / Text Encoder**.
+6. In txt2img, set the size and Frames, write the prompt and click **Generate**.
 
-Use **Settings → MiniMax H3** if the processor or FFmpeg is stored in a different location. Models are downloaded separately; installing the extension does not download weights or automatically install its runtime.
+The [installation guide](docs/INSTALLATION.md) covers the startup check, other model files and troubleshooting.
 
-## Settings
+## Recommended Settings
 
-These are the settings used in the working tests:
+| Setup | Sampler | Schedule type | Steps | CFG | Shift |
+| --- | --- | --- | --- | --- | --- |
+| **Base** (the h3 preset) | Res Multistep | Simple | 20 | 1 | 12 |
+| **Turbo LoRA** at weight 1 | Res Multistep | Simple | 8 (12 or more with speech) | 1 | 12 |
 
-| Control | Value |
-| --- | --- |
-| Output | Video |
-| Sampler | Euler |
-| Schedule type | Simple |
-| Steps | 20 for the smoke test; 32 for the showcased clips |
-| CFG | 1 |
-| Memory usage | Economical |
-| Include generated audio | Enabled |
+Euler works too; the 0.1.2 examples used Euler at 32 steps.
 
-**Width and Height must be multiples of 32**, with a minimum of 64. Examples: 640×384, 448×672 and 576×1024.
+**Width and Height must be multiples of 32**, with a minimum of 64. The model's native canvas is 1344×768 (768 on the short side); examples: 640×384, 448×672, 576×1024.
 
 Frames uses H3's **17n + 5** grid at 24 FPS:
 
@@ -135,7 +158,6 @@ Frames uses H3's **17n + 5** grid at 24 FPS:
 | ---: | ---: |
 | 22 | About 0.92 s |
 | 124 | About 5.17 s |
-| 141 | About 5.88 s |
 | 158 | About 6.58 s |
 | 362 | About 15.08 s |
 
@@ -143,34 +165,39 @@ The current maximum is 362 frames. Batch Count stays at one while H3 is active.
 
 ## Tips
 
-- Start with a short clip to check your installation before a long render.
-- Describe sounds explicitly: rushing water, footsteps, wind or machinery. State whether you want dialogue or music.
+- Start with a short clip to check your setup before a long render.
+- Describe sounds explicitly: rushing water, footsteps, wind or machinery. Say whether you want dialogue or music.
 - For several events, put them in order and leave enough time for the last action.
-- Use a fixed seed when comparing settings.
-- Keep the original MP4 and JSON sidecar; the sidecar records the generation settings.
-- Use the tested standard INT8 files first. A checkpoint advertised as H3 on Civitai may use a different architecture or format.
+- Use a fixed seed when comparing settings; the same prompt with a new seed reuses Forge's conditioning cache.
+- For first and last frame, use pictures with the same framing as the clip you want; the last frame is cropped to the output size.
+- Keep the original MP4 and its JSON sidecar.
+- Use the tested files first. A checkpoint advertised as H3 on Civitai may use a different architecture or format.
 
 ## Current Limits
 
-- **T2V with audio is verified.** Image-to-video and Still image controls are implemented, but their real GPU generation checks remain pending.
-- Only the documented standard INT8 diffusion/encoder pair with original FL2VA VAEs has passed inference here. Other models and smaller GPUs are untested.
-- FastH3/VSA, NVFP4/AWQ encoders, GGUF, LoRAs, uploaded-audio conditioning, last-frame controls and multiple references are future work.
-- The Comfy-Org converted video/audio VAEs used in some workflows do not match this backend's registered VAE layouts. Use the original VAEs listed above.
-- Hires. fix, face restoration, inpainting and selected generation scripts are outside this initial H3 path.
-- Generated sound is included in the videos, but exact audiovisual synchronization has not been formally assessed.
+- **T2V with audio, Still image and video without audio are verified.** First and last frame is implemented and waits for its GPU check.
+- **System RAM:** Forge loads the checkpoint, text encoder and VAEs together, about 50 GiB with the tested files. With 50 GB of RAM, swapping the text encoder or adding a LoRA on a loaded model was killed for lack of memory once.
+- Only an A40 (48 GB) was tested. Never OOM ran in about 22 GB of VRAM, a hint for 24 GB cards, not a proof.
+- With a LoRA, each step is about 50% slower, since Forge computes LoRA-patched INT8 layers in full precision.
+- Refused with a clear message: the NVFP4 AWQ text encoder (it encodes prompts wrongly in Forge), the INT8 video VAE and FastH3 checkpoints.
+- Multiple references, uploaded-audio conditioning, image editing and GGUF files are future work.
+- Hires. fix, face restoration, inpainting and selected generation scripts are outside the H3 path.
+- Sound is generated with the video, but exact audiovisual synchronization has not been formally assessed.
+- **Commercial use** of locally generated outputs requires a commercial license from MiniMax, according to the [official ComfyUI guide](https://docs.comfy.org/tutorials/video/minimax/minimax-h3); check the model's license before commercial use.
 
-The [handover and next steps](HANDOVER.md) track what remains. Detailed validation evidence is in [VALIDATION.md](VALIDATION.md).
+The [handover and next steps](HANDOVER.md) track what remains. Validation evidence is in [VALIDATION.md](VALIDATION.md).
 
 ## Credits
 
 - [Forge Neo](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo) by Haoming02.
 - [MiniMax H3](https://github.com/MiniMax-AI/MiniMax-H3) and the [integration reference](https://github.com/MiniMax-AI/awesome-minimax-h3-integration).
-- [DiffSynth Studio](https://github.com/modelscope/DiffSynth-Studio/tree/974cfa37f27ac55eba3b6d10efa21f876900572d), the pinned H3 runtime used by this extension.
-- [Comfy-Org](https://huggingface.co/Comfy-Org/MiniMax-H3), for the tested INT8 diffusion model and text encoder.
+- [ComfyUI](https://github.com/Comfy-Org/ComfyUI): the reference implementation this backend is ported from.
+- [Comfy-Org](https://huggingface.co/Comfy-Org/MiniMax-H3): the tested INT8 model, text encoder, VAEs and turbo LoRA files.
+- [lightx2v](https://github.com/ModelTC/Minimax-H3-Turbo): the H3 turbo LoRAs.
 
 ## License
 
-AGPL-3.0. See [LICENSE](LICENSE). Model weights and runtime dependencies retain their authors' licenses and are distributed separately.
+AGPL-3.0. See [LICENSE](LICENSE). Model weights retain their authors' licenses and are distributed separately.
 
 ---
 

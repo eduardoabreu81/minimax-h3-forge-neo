@@ -168,6 +168,38 @@ class ForwardTests(unittest.TestCase):
             v, a = model.forward_streams([video, audio], t[:1], context[:1], minimax_payload={"audio_scale": 4.0})
             self.assertTrue(torch.allclose(packed[:1], shapes.pack(v, a), atol=1e-5))
 
+    def test_text_token_tags_mark_the_vision_blocks(self):
+        from forge_h3.native.streams import text_token_tags
+        self.assertIsNone(text_token_tags(7, []))
+        self.assertEqual(text_token_tags(9, [(1, 4), (6, 12)]).tolist(), [1, 0, 0, 0, 1, 1, 0, 0, 0])
+
+    def test_packed_forward_with_keyframes_matches_the_stream_forward(self):
+        from forge_h3.native.layout import PackedLayout
+        from forge_h3.native.streams import Generation, StreamShapes, text_token_tags
+        with torch.inference_mode():
+            model = tiny_dit(17)
+            shapes = StreamShapes(video=(1, 24, 2, 6, 10), audio=(1, 32, 2, 9))
+            frames = 5
+            keyframes = [{"resolved_frame_index": 0, "latent": torch.randn(1, 24, 1, 6, 10)},
+                         {"resolved_frame_index": frames - 1, "latent": torch.randn(1, 24, 1, 6, 10)}]
+            spans = [(0, 3)]
+            video, audio, context = torch.randn(shapes.video), torch.randn(shapes.audio), torch.randn(1, 7, 48)
+            t = torch.tensor([700.0])
+            model.generation = Generation(shapes=shapes, seed=1, audio_scale=4.0, keyframes=keyframes, vision_spans=spans)
+            packed = model(shapes.pack(video, audio), t, context)
+            layout = model._layout(7, shapes, keyframes)
+            self.assertEqual([k for _, _, k in layout.segments], ["text", "cond", "cond", "audio", "video"])
+            payload = {"audio_scale": 4.0, "seed": 1, "keyframes": keyframes,
+                       "cond_video_latents": [kf["latent"] for kf in keyframes], "text_token_tags": text_token_tags(7, spans),
+                       "layout": PackedLayout(7, 2, 6, 10, 9, keyframes=keyframes)}
+            v, a = model.forward_streams([video, audio], t, context, minimax_payload=payload)
+            self.assertTrue(torch.allclose(packed, shapes.pack(v, a), atol=1e-5))
+            # the keyframes change the prediction, and a new set of keyframes gets its own layout
+            model.generation = Generation(shapes=shapes, seed=1, audio_scale=4.0)
+            plain = model(shapes.pack(video, audio), t, context)
+            self.assertFalse(torch.allclose(packed, plain, atol=1e-4))
+            self.assertIsNot(model._layout(7, shapes, keyframes[:1]), layout)
+
     def test_masked_rows_run(self):
         with torch.inference_mode():
             model = tiny_dit(None)

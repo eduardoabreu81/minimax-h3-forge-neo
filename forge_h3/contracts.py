@@ -58,10 +58,15 @@ class GenerationRequest:
     frames: int = DEFAULT_FRAMES
     output: str = "Video"
     include_audio: bool = True
+    first_frame: bool = False
+    last_frame: bool = False
 
     def __post_init__(self):
         if self.output not in ("Video", "Still image"):
             raise H3Error("H3 output must be Video or Still image.")
+        if self.output == "Still image" and self.keyframes:
+            raise H3Error("H3 Still image does not take a first or last frame yet. Choose Video, or turn off "
+                          "ImageStitch Integrated.")
         self.width = integer(self.width, "Width")
         self.height = integer(self.height, "Height")
         if min(self.width, self.height) < 64 or self.width % 32 or self.height % 32:
@@ -73,6 +78,10 @@ class GenerationRequest:
             self.frames = integer(self.frames, "Frames")
             if not MIN_FRAMES <= self.frames <= MAX_FRAMES or (self.frames - MIN_FRAMES) % FRAME_STEP:
                 raise H3Error("H3 Frames must follow 17n + 5, from 5 to 362 (for example 22 or 124).")
+
+    @property
+    def keyframes(self):
+        return self.first_frame or self.last_frame
 
     @property
     def duration(self):

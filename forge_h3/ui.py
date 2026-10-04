@@ -43,7 +43,11 @@ class Panel:
                                    visible=not is_img2img, elem_id=f"{self.tab}_h3_output")
             self.audio = gr.Checkbox(value=True, label="Include generated audio", elem_id=f"{self.tab}_h3_audio")
             if is_img2img:
-                gr.Markdown("Image-to-video is not available in the native backend yet; use txt2img.")
+                gr.Markdown("The input image is the **first frame**; Denoising strength is not used. For a **last frame** "
+                            "too, add one image to the **ImageStitch Integrated** gallery.")
+            else:
+                gr.Markdown("For a **last frame**, add one image to the **ImageStitch Integrated** gallery. "
+                            "For a first frame, use img2img.")
             self.status = gr.Markdown("Select the H3 text encoder, video VAE and audio VAE in VAE / Text Encoder.")
             with gr.Accordion("Components", open=False):
                 self.summary = gr.Markdown("")

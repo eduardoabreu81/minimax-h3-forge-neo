@@ -1,5 +1,8 @@
 # Laundromat: six-second Forge H3 benchmark
 
+> [!NOTE]
+> These records are from version 0.1.2 and its DiffSynth runtime. The native backend of 0.2.0 ran the same prompts 3.7x to 5.8x faster; its measurements are in [NATIVE_PORT_PLAN.md](NATIVE_PORT_PLAN.md#results-2026-10-03-runpod-a40-50-gb-ram).
+
 Date: 2026-10-02 (America/Sao_Paulo). Extension 0.1.2. This request ran through Forge's authenticated native txt2img Generate callback on the same dedicated NVIDIA A40 and standard FL2VA INT8 model set as the cinematic benchmark. No extension source changes were needed.
 
 The requested scene is a washing machine bursting open in a laundromat, releasing a torrent with clothes, fish, a swimming dog and finally a seal. The submitted prompt adds a steady wide shot, natural sound and a cue for the seal to appear before the delivery cut. [Original prompt](prompts/laundromat-original.txt), [submitted prompt](prompts/laundromat-submitted.txt), [complete settings](LAUNDROMAT_SETTINGS.json).

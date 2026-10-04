@@ -1,17 +1,50 @@
-# Runpod smoke procedure
+# GPU validation plan
 
-The dedicated development Pod was deleted after archiving its evidence. This procedure is for a future authorized session. The short T2V/audio check passed; img2img, Still image, audio-disabled inference and ordinary-model recovery remain pending.
+The checks for the next GPU session, in order. Everything here was prepared on CPU first; a GPU session starts only when the owner authorizes it, and each step records its MP4, sidecar, infotext, wall time and the Forge log slice.
 
-Do the offline checks first. The completed test allocation was one A40 (48 GB VRAM), 50 GB host RAM, 150 GB persistent workspace and 30 GB container disk. The prepared files occupy approximately 64 GiB. These are hardware/storage inputs, not validated inference-capacity guarantees. Follow the actual Pod allocation rather than shared host totals reported by filesystem or memory utilities.
+The previous session (2026-10-03, A40 48 GB, 50 GB RAM, Forge Neo `97b26fb`) validated the native backend; see [VALIDATION.md](../VALIDATION.md). Same hardware and model set unless a step says otherwise: pruned INT8 DiT, INT8 text encoder, Comfy-Org fp16 video VAE and fp32 audio VAE.
 
-1. Install the extension in a Forge Neo checkout and prepare its pinned runtime with Forge's Python. Verify the actual Forge revision and save the package output. Run `tools/check_runtime.py --quant int8` before downloading model weights; require `runtime_ready: true`. The Torch/Torchaudio combination must have matching available builds: the local CPU test used 2.8, while a fresh Torch 2.13 environment had no matching Torchaudio wheel in the catalogs inspected on 2026-10-02. No automatic Docker/template replacement is needed.
-2. First place the small original FL2VA processor assets and repeat `tools/check_runtime.py --quant int8 --processor <processor-directory>`. Then place a compatible standard FL2VA diffusion model, text encoder and both VAEs in the native directories. Run `tools/diagnose.py`. Fix its errors before launching generation.
-3. Start Forge and confirm H3 appears in the existing txt2img/img2img controls. Selecting a normal checkpoint must restore Batch Size and the previous sampler/CFG values. Steps must remain a separate denoising control.
-4. For the first test use txt2img, Video, 640x384, 22 frames, 20 steps, CFG 1, seed 123, Economical memory and audio enabled. Prompt: `A small bird sings on a branch in a quiet garden, natural daylight, clear bird song, no subtitles.` Save the generated MP4, sidecar and Forge log; inspect CUDA errors and peak GPU/host memory. A 22-frame clip lasts about 0.92 seconds.
-5. Confirm video and audio streams are playable and contain 22 frames at 24 FPS. Disable Include generated audio and repeat; the new MP4 must have no audio stream.
-6. Load a 640x384 image into the normal img2img input and repeat with an appropriate motion prompt. Confirm first-frame conditioning, video output and audio. Masks and batch-directory input are outside the initial smoke scope.
-7. In txt2img choose Still image. Frames and audio controls must hide. Verify a PNG, a five-frame generation recorded in its metadata, and one gallery image.
-8. Select a normal Forge checkpoint and generate one ordinary image. Confirm the extension pipeline released its memory and Forge's original loader/generation still works.
-9. If those pass, try 124 frames at 832x480. Record time, VRAM, RAM and disk consumption. Increase one parameter at a time; do not launch a large unattended batch.
+## 0. Before generating
 
-Stop the run when inference errors, memory exhaustion, invalid output or a model/component mismatch occurs. Preserve the concrete error and logs for a targeted fix. GPU kernels, model-load behavior and output quality require this real test; local CPU checks do not substitute for it.
+- Check that the model files are still in place and complete (a stopped Pod without a volume may lose its disk). Compare sizes with [INSTALLATION.md](INSTALLATION.md#tested-set).
+- Copy the current extension, restart Forge and check the console for `[MiniMax H3] native backend enabled`.
+- Note `nvidia-smi`, free RAM and the Forge revision.
+
+## 1. Regression: text-to-video
+
+1. Bird: 640×384, 22 frames, Euler, Simple, 20 steps, CFG 1, seed 123. Prompt: `A small bird sings on a branch in a quiet garden, natural daylight, clear bird song, no subtitles.` Expect about 53 s with loading, the same picture as the 2026-10-03 run (same seed and settings).
+2. Laundromat: 448×672, 158 frames, Res Multistep, 20 steps, seed 20261003, the [submitted laundromat prompt](prompts/laundromat-submitted.txt). Expect about 197 s and the same picture as the 2026-10-03 run.
+
+Stop if either differs: the keyframe changes touched the text encoder, the transformer and the engine.
+
+## 2. First and last frame
+
+Keyframes: the first and the last frame of the laundromat clip from step 1, as PNG, so the result can be compared with a clip whose ends are known.
+
+1. **First frame:** img2img with the first frame, same prompt, size, frames and seed as step 1.2. Check that frame 0 matches the input and that the motion continues from it.
+2. **Last frame only:** txt2img with the last frame in **ImageStitch Integrated**. Check that the clip ends on it.
+3. **First and last:** img2img plus ImageStitch. Check both ends.
+4. **A different picture:** a first frame that is not from H3 (a photo or another model's image, different framing) with a short prompt that describes motion. Check that it is followed, and listen to the audio.
+5. **CFG 3 with a negative prompt** on 2.3, since the keyframes go into both prompts.
+6. Back to plain txt2img (step 1.1): the keyframes must not stay (same output as step 1.1).
+
+For each: console line `[MiniMax H3] video: ... first and last frame`, infotext `H3 First frame` / `H3 Last frame`, sidecar fields, time against the plain clip.
+
+## 3. Turbo and Shift
+
+1. Turbo LoRA, 8 and 12 steps, on the laundromat and on a clip with speech; listen to the voice.
+2. Shift 6 against 12 with the turbo LoRA at 768p, as lightx2v recommends.
+
+## 4. Memory
+
+1. Peak RAM while loading H3 (whole process), during sampling and after.
+2. Never OOM Integrated with first and last frame.
+3. Switching to an ordinary checkpoint and back after a keyframe run.
+
+## 5. Browser
+
+In the UI: the img2img panel note, an image in ImageStitch, Generate, the MP4 in the player and the infotext.
+
+## Stop conditions
+
+Stop and keep the error and logs at the first traceback, out-of-memory kill, invalid output or a model/component mismatch. Fix it locally with a test that reproduces it, then resume.

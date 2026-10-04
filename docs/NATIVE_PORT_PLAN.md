@@ -34,7 +34,7 @@ Found:
 - Turbo at 8 steps weakens the audio and invents signage text; at 1K / 15 s the 12-step turbo clip came out grainy and lost part of the story.
 
 Next, from these results:
-- An option to free the text encoder from RAM once the prompt is encoded: it is 27 GB used once per prompt and idle for the whole sampling. The peak would drop from about 47 GB to about 20 GB; a changed prompt costs a reload from disk, the same prompt with another seed uses Forge's conditioning cache. Needed for 32 GB machines.
+- Loading the text encoder only to encode the prompt. Freeing it after encoding lowers the RAM in use while sampling, but Forge loads the checkpoint, text encoder and VAEs together (about 50 GiB with the tested files), so a 32 GB machine needs the text encoder loaded on demand, not just released. Postponed on 2026-10-03; measure on the Pod with limited RAM first.
 - Find why the H3 panel sometimes does not bind to Forge's controls at startup (the warning now lists the missing controls).
 - LoRA speed: Forge computes LoRA-patched int8 layers in full precision (`forge_force_cast_weights`).
 
@@ -138,6 +138,7 @@ From this repository we keep the H3 panel and UI binding, `contracts.py` (Frames
 ### 6. Feature parity, then retire DiffSynth
 
 - img2img first frame (FL2VA keyframes, needs the vision tower), Still image, audio off, cancellation, switching to and from ordinary models and Wan.
+- Done after the GPU session: first and last frame (img2img input image and the ImageStitch Integrated gallery, as Forge Neo does for Wan 2.2), with CPU tests that replay Forge's generation order. Awaiting its GPU check ([RUNPOD_SMOKE.md](RUNPOD_SMOKE.md)).
 - When the native path covers T2V/audio and these modes, remove DiffSynth, the runtime installer and the schema registry; update README, wiki and VALIDATION.
 
 ## Risks

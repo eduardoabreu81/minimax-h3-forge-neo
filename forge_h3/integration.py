@@ -8,12 +8,15 @@ import json
 import uuid
 from pathlib import Path
 
+from . import keyframes
 from .contracts import FPS, GenerationRequest, H3Error, set_pending_error
 from .media import export_video, find_ffmpeg
 from .models import inspect_model, resolve_components
 
 # StableDiffusionProcessing.distilled_cfg_scale when a request does not set it
 API_DEFAULT_DISTILLED_CFG = 3.5
+# img2img Resize mode "Just resize (latent upscale)": it would interpolate the placeholder latent
+LATENT_UPSCALE = 3
 
 
 def checkpoint_info(value):
@@ -71,23 +74,40 @@ def before_process(p, output, include_audio):
         raise
 
 
+def validate_img2img(p):
+    if not getattr(p, "init_images", None):
+        raise H3Error("Add an input image for H3 image-to-video: it becomes the first frame.")
+    if getattr(p, "resize_mode", 0) == LATENT_UPSCALE:
+        raise H3Error("H3 does not take the latent upscale resize mode. Choose another Resize mode.")
+
+
 def _before_process(p, output, include_audio):
+    p.h3_last_frame = None
     info = select_h3(p)
     if info is None:
         return
     from modules import processing, shared
-    if isinstance(p, processing.StableDiffusionProcessingImg2Img):
-        raise H3Error("Image-to-video is not available in the native H3 backend yet. Use txt2img.")
+    is_img2img = isinstance(p, processing.StableDiffusionProcessingImg2Img)
     validate_processing(p)
+    if is_img2img:
+        validate_img2img(p)
     overrides = getattr(p, "override_settings", {})
     resolve_components(info.filename, module_paths(overrides.get("forge_additional_modules", shared.opts.forge_additional_modules)))
-    request = GenerationRequest(width=p.width, height=p.height, frames=p.batch_size, output=output, include_audio=include_audio)
+    last = keyframes.last_frame(p, p.width, p.height)
+    request = GenerationRequest(width=p.width, height=p.height, frames=p.batch_size, output=output, include_audio=include_audio,
+                                first_frame=is_img2img, last_frame=last is not None)
     if request.output == "Video":
         find_ffmpeg(getattr(shared.opts, "h3_ffmpeg_path", ""))
     p.h3_request = request
+    p.h3_last_frame = last
     p.batch_size = 1
+    if is_img2img:
+        # H3 generates the whole clip from noise; the input image conditions it as the first frame
+        p.denoising_strength = 1.0
     audio = "with audio" if request.include_audio else "without audio"
-    print(f"[MiniMax H3] {request.output.lower()}: {request.frames} frames at {request.width}x{request.height}, {audio}")
+    frames = " and ".join(name for name, used in (("first", request.first_frame), ("last", request.last_frame)) if used)
+    conditioning = f", {frames} frame" if frames else ""
+    print(f"[MiniMax H3] {request.output.lower()}: {request.frames} frames at {request.width}x{request.height}, {audio}{conditioning}")
 
 
 def process(p):
@@ -97,6 +117,15 @@ def process(p):
     if not getattr(p.sd_model, "is_h3", False):
         raise H3Error("Forge did not load the H3 model. Check the VAE / Text Encoder selection and the console.")
     from modules import shared
+
+    engine = p.sd_model
+    last = getattr(p, "h3_last_frame", None)
+    # Forge caches the conditioning by prompt, which knows nothing of the keyframes
+    if request.keyframes or engine.keyframe_images():
+        p.clear_prompt_cache()
+    engine.set_keyframes(keyframes.to_tensor(last) if last is not None else None)
+    p.extra_generation_params.update({"H3 First frame": True} if request.first_frame else {})
+    p.extra_generation_params.update({"H3 Last frame": True} if request.last_frame else {})
 
     from .native.presets import PRESET, SHIFT
     if getattr(shared.opts, "forge_preset", None) != PRESET:
@@ -110,17 +139,27 @@ def process(p):
 
 
 def before_sampling(p, noise):
+    import torch
+
     from .native import patches
     request = getattr(p, "h3_request", None)
     if request is None:
         return
     from modules import rng
+    if request.first_frame and p.sd_model.first_frame is None:
+        error = H3Error("The img2img input image did not reach H3. Set Settings > VAE > VAE type for encode to Full, "
+                        "and check the console for an earlier error.")
+        set_pending_error(error)
+        raise error
     shape = p.sd_model.prepare(request.frames, request.width, request.height, int(p.seeds[0]))
     # Forge made p.rng for an image latent; the samplers that add noise on the way (ancestral, SDE, res_multistep)
     # draw from it too, so it has to give the packed shape
     p.rng = rng.ImageRNG(shape, p.seeds, subseeds=p.subseeds, subseed_strength=p.subseed_strength,
                          seed_resize_from_h=p.seed_resize_from_h, seed_resize_from_w=p.seed_resize_from_w)
     p.modified_noise = p.rng.next().to(device=noise.device, dtype=noise.dtype)
+    if request.first_frame:
+        # img2img samples from init_latent at full denoise; the packed start is pure noise
+        p.init_latent = torch.zeros_like(p.modified_noise)
     patches.begin_sampling()
 
 
@@ -167,7 +206,8 @@ def _write_video(p, processed, request, generation):
                           cancelled=lambda: shared.state.interrupted)
     sidecar = dict(prompt=p.prompt, negative_prompt=p.negative_prompt, seed=generation.seed, width=request.width,
                    height=request.height, frames=request.frames, fps=FPS, steps=p.steps, sampler=p.sampler_name,
-                   scheduler=p.scheduler, cfg=p.cfg_scale, include_audio=audio is not None, infotext=infotext)
+                   scheduler=p.scheduler, cfg=p.cfg_scale, include_audio=audio is not None,
+                   first_frame=request.first_frame, last_frame=request.last_frame, infotext=infotext)
     Path(output).with_suffix(".json").write_text(json.dumps(sidecar, indent=2), encoding="utf-8")
     processed.video_path = output
     processed.comments += f"H3 video saved to {output}\n"

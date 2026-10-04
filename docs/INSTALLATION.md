@@ -1,127 +1,102 @@
-# MiniMax H3 for Forge Neo
+# Installation and troubleshooting
 
-Experimental version 0.1.2. The extension runs a local MiniMax H3 pipeline inside Forge's Python process. It adds a small collapsible panel to the existing txt2img and img2img controls, and uses Forge's existing image gallery and video player.
+Version 0.2.0. MiniMax H3 runs on Forge Neo's own loader, samplers and memory management; the extension installs no Python packages. See the [README](../README.md) for the short version and [VALIDATION.md](../VALIDATION.md) for what was checked on a GPU.
 
-**Validation status:** 52 CPU tests pass with the real pinned runtime. An A40 Runpod passed runtime/processor checks, full-file SHA256 and model-container checks, actual Forge startup and authenticated native-panel callbacks in txt2img/img2img. Two standard INT8 text-to-video requests through Forge passed complete video/audio decoding: a 640x384, 22-frame smoke test in 312.3 seconds, and a native 576x1024, 362-frame cinematic clip in 4772.2 seconds (79 min 32 s). Both use 24 FPS and stereo AAC. The cinematic delivery trims two frames for exactly 15 seconds. Forge reports 25.50 GiB peak reserved Torch memory and 26.1 GiB sampled system GPU memory for that request. Other modes, models, GPUs and audiovisual synchronization remain unverified. See [VALIDATION.md](../VALIDATION.md) and [measured benchmarks](BENCHMARKS.md) for the exact scope, environment, hashes and prompts.
+## Requirements
 
-A third request generated a laundromat scene at native 448x672/158 frames, delivered at exactly 440x652/6 seconds, in 903.2 seconds (15 min 3 s). It retained the same 32 steps, model set, CFG and memory policy as the cinematic test. Both streams passed complete decoding; sampled frames show the requested sequence of clothes, fish, a dog and a seal-like animal. Forge reports 24.03 GiB peak reserved Torch memory and 24.6 GiB sampled system GPU memory. See the [six-second benchmark](LAUNDROMAT_6S_BENCHMARK.md) for the precise crop/trim, settings, prompts and measurement limits.
+- **Forge Neo**, `neo` branch. Tested with revision `97b26fb` (2 October 2026, reported as `neo-2.29.2`), Python 3.13, Torch 2.13 with CUDA 13.0 and comfy-kitchen 0.2.36 with its CUDA backend.
+- **FFmpeg** for the MP4 export, on the `PATH` or set in **Settings → MiniMax H3**.
+- **Disk:** about 50 GiB for the four required files.
+- **System RAM:** Forge loads the checkpoint, text encoder and VAEs together, about 50 GiB with the tested files. The A40 test machine had 50 GB; swapping the text encoder or adding a LoRA on a loaded model exceeded it once.
+- **GPU:** only an NVIDIA A40 (48 GB) was tested. With **Never OOM Integrated** (UNet always offloaded) a 158-frame 448×672 clip used about 22 GB of VRAM. Smaller cards are untested.
 
-## Initial modes
+## Install
 
-- Text to video with generated sound.
-- Image to video with generated sound; img2img supplies the first frame.
-- Text to still image; H3 generates five frames and returns the first.
+1. In Forge Neo, open **Extensions → Install from URL**.
+2. Paste `https://github.com/eduardoabreu81/minimax-h3-forge-neo`, click **Install** and restart the WebUI.
+3. Check the console at startup:
+   - `[MiniMax H3] native backend enabled (torch ...)`: ready.
+   - `[MiniMax H3] This Forge Neo is too old for the extension...`: the extension changed nothing and stays disabled. Update Forge Neo (`git pull` on the `neo` branch) and restart. The lines below the message list what is missing.
 
-No extra generation tab, ComfyUI server, hosted inference API or automatic model download is used. DiffSynth is a Python runtime dependency within Forge.
+### Upgrading from 0.1.2
 
-## Controls
+Version 0.1.2 installed a DiffSynth runtime into Forge's environment and needed a processor folder in `models/H3/processor`. Neither is used anymore: the tokenizer ships with the extension. The extension does not uninstall those packages; they do not affect it.
 
-Use the normal Checkpoint and VAE / Text Encoder selectors, prompt, negative prompt, resolution, CFG, seed and Generate button. Steps remains denoising steps. When an H3 checkpoint is selected, Batch Size becomes **Frames**, using the `17n + 5` grid from 5 to 362 at 24 FPS. 124 frames is about 5.17 seconds. The frame control and audio toggle are hidden for still output. Batch Count is fixed to one.
+The original MiniMax VAEs used with 0.1.2 still work, so there is no need to download the Comfy-Org VAEs if you have them.
 
-The H3 panel contains Output, Include generated audio, Memory usage and a component summary. Both audio and video are computed jointly; the audio checkbox changes export only.
+## Model files
 
-This backend implements **Euler integration with H3's shifted linear schedule** (video shift 12, audio shift 3). Native sampler controls are set to Euler / Simple. Other sampler combinations fail clearly. ComfyUI's `res_multistep` and `beta` workflows are not reproduced by this version.
+### Tested set
 
-Automatic memory usage reserves 2 GiB of currently free VRAM. Economical reserves 4 GiB and uses 60% of the remaining budget. Both use disk-backed weight offload and tiled video decoding. Pipelines are released after each request so another Forge model can run afterward. These policies do not guarantee that a particular model or resolution fits a GPU.
+| Part | File | Size | Folder |
+| --- | --- | ---: | --- |
+| H3 checkpoint | [minimax_h3_fl2va_pruned_int8_convrot](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/e5eb578a89295337b8ff433a035929ce0279e0b6/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors) | 19.5 GiB | `models/Stable-diffusion` |
+| Text encoder | [qwen3vl_32b_minimax_h3_int8_convrot](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/e5eb578a89295337b8ff433a035929ce0279e0b6/text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors) | 25.3 GiB | `models/text_encoder` |
+| Video VAE | [minimax_h3_video_vae_fp16](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/e5eb578a89295337b8ff433a035929ce0279e0b6/vae/minimax_h3_video_vae_fp16.safetensors) | 4.9 GiB | `models/VAE` |
+| Audio VAE | [minimax_h3_audio_vae_fp32](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/e5eb578a89295337b8ff433a035929ce0279e0b6/vae/minimax_h3_audio_vae_fp32.safetensors) | 0.6 GiB | `models/VAE` |
+| Turbo LoRA (optional) | [minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/e5eb578a89295337b8ff433a035929ce0279e0b6/loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors) | 1.8 GiB | `models/Lora` |
 
-## Install on Forge Neo
+Links point to the Comfy-Org revision `e5eb578`. The text encoder includes the vision weights that first and last frame use.
 
-1. Install through Forge's **Extensions → Install from URL**, or extract the entire `minimax-h3-forge-neo` directory into `<Forge>/extensions/minimax-h3-forge-neo`. Keep `install.py`, `forge_h3`, `scripts` and `tools` together.
-2. Restart Forge normally. Its native extension installer runs `install.py`, which prepares the pinned **INT8** runtime in Forge's own Python environment. It checks metadata first and skips package installation when the pinned revision and required packages are present. A new setup needs internet access, resolves the package plan before installing, constrains existing core versions and then performs a weight-free CPU runtime check. Model weights and processor assets are not downloaded automatically.
+### Also checked
 
-If Forge is launched with `--skip-install` or environment preparation is skipped, its extension installer will not run. Use a normal launch to complete setup, or use the manual fallback below. Incompatible existing Torch/Torchaudio builds or dependency conflicts stop H3 setup and produce diagnostics; the installer does not replace Forge's core packages to force compatibility.
+| File | Result |
+| --- | --- |
+| Original MiniMax FL2VA [video VAE](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/42ed227ee7df40d41602854ae760620d6eb651fe/FL2VA/video_vae/source/model.safetensors) and [audio VAE](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/42ed227ee7df40d41602854ae760620d6eb651fe/FL2VA/audio_vae/model.safetensors) | Work, identical output to the Comfy-Org VAEs. Both are named `model.safetensors` at the source: give them distinct names. |
+| `minimax_h3_fl2va_pruned_w6a8` (14.9 GiB) | Works. |
+| `minimax_h3_fl2va_pruned_fp8_scaled` (19.5 GiB) | Works; slower than INT8 on the A40 (Ampere has no FP8 tensor cores). |
+| `minimax_h3_fl2va_int8_convrot`, the full (not pruned) DiT (31.7 GiB) | Loads in the CPU layout tests; not generated with, since it needs more system RAM. |
+| larryvrh v4 step600 ema turbo LoRA | Works. |
+| `qwen3vl_32b_minimax_h3_nvfp4_awq` text encoder | **Refused:** it loads in Forge but encodes prompts wrongly (a bird prompt gave a dog). |
+| `minimax_h3_video_vae_int8_convrot` | **Refused:** not supported yet. |
+| FastH3 checkpoints | **Refused:** they need their own sparse-attention schedule. |
 
-### Manual fallback and diagnostics
+Community files are recognized by their tensor layout, not by their name. A file called H3 on Civitai may still be another architecture or format; the extension says so when it cannot use a file.
 
-Activate the same Python environment used by Forge. The first command below plans installation; the second installs. Existing versions of Torch, Transformers, Gradio and other core packages are constrained to prevent an upgrade. The explicit tools remain useful for troubleshooting or preparing an environment with startup installation disabled.
+## Selecting the components
 
-```bash
-python extensions/minimax-h3-forge-neo/tools/prepare_runtime.py --quant int8
-python extensions/minimax-h3-forge-neo/tools/prepare_runtime.py --quant int8 --install
-```
+1. Pick the **h3** UI preset: Res Multistep, Simple, 20 steps, CFG 1, Shift 12.
+2. Select the H3 checkpoint in the checkpoint selector.
+3. Under **VAE / Text Encoder**, select the text encoder, the video VAE and the audio VAE. The **Components** section of the **MiniMax H3** panel lists what was recognized.
+4. Batch Size becomes **Frames**, on the 17n + 5 grid, with the duration next to it.
 
-Use `--quant plain`, `--quant fp8` or `--quant nf4` when explicitly preparing the corresponding path; those variants still need their own GPU validation. Automatic setup prepares the tested INT8 dependencies. `--check-only` prints the plan offline.
+Outside the h3 preset, the Shift slider belongs to the other preset (for example Distilled CFG) and H3 keeps its shift of 12.
 
-DiffSynth imports Torchaudio even for generated audio. The preparation tool keeps an existing Torchaudio version, or requests the version matching Forge's Torch and uses PyTorch's matching CUDA wheel index when that build suffix is available. Torch itself stays constrained. Keep the dependency-resolution output if the pod image uses a nonstandard build.
+## First and last frame
 
-**Check the Torch/Torchaudio combination before downloading weights.** On 2026-10-02, the official CPU and CUDA 13.0 wheel catalogs did not provide Torchaudio 2.13, although the inspected Forge launcher defaults to Torch 2.13. A new environment using that default cannot install this H3 dependency set as written. The local validation used Torch/Torchvision/Torchaudio 2.8.0/0.23.0/2.8.0 CPU builds with Python 3.13.15 and Transformers 4.57.6. The existing Pod image advertises Torch 2.8, but the actual Forge environment must still be checked. The preparation tool does not downgrade Torch; use an environment with matching Torch/Torchaudio builds. Catalogs: [CPU](https://download.pytorch.org/whl/cpu/torchaudio/), [CUDA 13.0](https://download.pytorch.org/whl/cu130/torchaudio/).
+- **img2img:** the input image is the first frame, resized by Forge's **Resize mode**. Denoising strength is ignored (H3 always generates the whole clip). The "Just resize (latent upscale)" mode is refused.
+- **Last frame:** turn on **ImageStitch Integrated** and add one image to its gallery; it is cropped to the output size. With more than one image, the first is used.
+- **txt2img + ImageStitch:** last frame only.
+- Still image output does not take keyframes yet.
 
-After runtime preparation, run this weight-free CPU check with Forge's Python:
+This mode is covered by CPU tests that replay Forge's generation order; it has not run on a GPU yet.
 
-```bash
-python extensions/minimax-h3-forge-neo/tools/check_runtime.py --quant int8
-```
+## Troubleshooting
 
-Require `runtime_ready: true` before proceeding. The check imports H3 and the selected quantization package, constructs an empty CPU pipeline, validates text/video/still/first-frame argument contracts and both schedulers. It loads no model tensors and performs no inference. A failure returns exit code 2 and identifies the failed check. This does not verify CUDA kernels or memory capacity.
+| Symptom | What to do |
+| --- | --- |
+| The MiniMax H3 panel does not appear | Select an H3 checkpoint; the panel shows only for H3. If the console says `H3 native controls were not found`, update Forge Neo and restart. |
+| `Select the H3 text encoder / video VAE / audio VAE...` | Select all three components under **VAE / Text Encoder**, and only one of each. |
+| `Unrecognized H3 component` | A selected module is not an H3 file. Deselect it. |
+| `H3 width and height must be multiples of 32` / `H3 Frames must follow 17n + 5` | Use multiples of 32 for the size; the Frames slider moves in steps of 17 from 5 to 362. |
+| `The img2img input image did not reach H3` | Set **Settings → VAE → VAE type for encode** to **Full** and check the console for an earlier error. |
+| The process is killed while loading or switching models | Not enough system RAM. Close other programs, avoid switching the text encoder on a loaded model, and restart Forge before loading H3. |
+| `FFmpeg is missing` / `H3 FFmpeg executable does not exist` | Install FFmpeg or set its path in **Settings → MiniMax H3**. |
+| `Select Script: None for H3 generation` | Generation scripts are not supported with H3 yet. |
 
-The verified Runpod test used the PyTorch 2.8 CUDA 12.8 image's Python 3.12.3, with a persistent environment inheriting its Torch/Torchvision/Torchaudio builds. Forge's inspected Python target is 3.13; this Pod used `--skip-python-version-check` and a separate compatibility requirements file. Gradio 4.40 declares Pillow `<11`, while Forge pins Pillow 12.3 and pillow-heif 1.5 requires Pillow `>=11.1`. The test profile used Pillow 10.4 and pillow-heif 0.20, whose declared minimum is Pillow 10.1 and whose `register_heif_opener` API matches Forge. Upstream Forge files were preserved. `pip check` passed. The profile also completed one real 640x384, 22-frame H3 video/audio generation on the A40 through Forge's authenticated Generate callback in 312.3 seconds. See `VALIDATION.md`, `docs/RUNPOD_PREFLIGHT.json` and `docs/RUNPOD_SMOKE_RESULT.json` for the exact scope.
+Report other errors on the [issue tracker](https://github.com/eduardoabreu81/minimax-h3-forge-neo/issues) with the console output.
 
-3. Add locally downloaded model files:
-
-```text
-<Forge>/models/Stable-diffusion/<H3 diffusion model>.safetensors
-<Forge>/models/text_encoder/<H3 text encoder>.safetensors
-<Forge>/models/VAE/<H3 video VAE>.safetensors
-<Forge>/models/VAE/<H3 audio VAE>.safetensors
-<Forge>/models/H3/processor/<FL2VA processor files>
-```
-
-4. Restart Forge and refresh its model list. Select the H3 checkpoint and all three additional files in **VAE / Text Encoder**. Use **Settings > MiniMax H3 > H3 Processor directory** if your processor is stored elsewhere. The directory must include `tokenizer_config.json`, `preprocessor_config.json` and the tokenizer data referenced by those configurations. Files must be complete local assets; this extension never requests model weights from a hub.
-5. FFmpeg must be on PATH or available through imageio-ffmpeg. Set **H3 FFmpeg executable** in Settings if needed. H.264 video and AAC audio are written to the native txt2img/img2img output directory. PNG and JSON sidecars preserve generation details.
-
-## Model compatibility
-
-Model selection does not depend on filenames or a list of Civitai titles. The extension inspects safetensors tensor keys and shapes; the pinned runtime must recognize that schema. Community weights that keep a supported architecture/layout can use the same path. Arbitrary files advertised as H3 are not automatically compatible.
-
-The pinned DiffSynth revision contains schemas for original FL2VA, Comfy-Org pruned BF16, INT8 ConvRot, scaled FP8, DiffSynth NF4 and some Singularity layouts. Only the standard INT8 ConvRot diffusion/encoder pair with original FL2VA VAEs has passed real video/audio inference here, including the documented 1K vertical clip. Other paths remain unverified. Use a **single consolidated safetensors file per role** in this initial version; sharded HF checkpoints and arbitrary key remapping are not implemented.
-
-A concrete initial INT8 test configuration from the upstream runtime example is:
-
-- `minimax_h3_fl2va_pruned_int8_convrot.safetensors`
-- `qwen3vl_32b_minimax_h3_int8_convrot.safetensors`
-- Original FL2VA video VAE and audio VAE, or supported equivalent layouts.
-- Original FL2VA processor assets.
-
-**The NVFP4/AWQ text encoder in the supplied Ep29/Ep35 workflows is not supported by this initial backend.** Substitute a supported text encoder. FastH3/VSA, GGUF, LoRAs, uploaded-audio synchronization, last-frame/multiple-reference controls and workflow import remain future work. Fast-model metadata is rejected; weights without distinguishing metadata may share a standard schema, so select an actual standard FL2VA model for the first test.
-
-Bounded inspection of the actual files also found that Comfy-Org's `minimax_h3_video_vae_fp16.safetensors` and `minimax_h3_audio_vae_fp32.safetensors` have different schemas from the original VAEs registered by this runtime. **Use the original FL2VA video VAE (`video_vae/source/model.safetensors`) and audio VAE (`audio_vae/model.safetensors`) for the first test.** Their real headers, the pruned INT8 diffusion model and the INT8 encoder match the registry. This proves layout recognition only; it does not prove GPU inference. See `docs/HEADER_INSPECTION.json` for the inspected identifiers.
-
-Hires. fix, face restoration, inpainting, seed variation/resizing and selected generation scripts are rejected rather than silently ignored. Other extensions that expect a native diffusion engine may require their controls to be disabled for H3. Ordinary model generation is routed to Forge's original processing functions.
-
-## Offline diagnostics before starting the GPU
-
-Once the small processor assets are available, the runtime check can also construct the real processor and tokenize a sample prompt locally:
-
-```bash
-python extensions/minimax-h3-forge-neo/tools/check_runtime.py --quant int8 \
-  --processor /workspace/forge/models/H3/processor
-```
-
-With Forge's Python environment and local model files available, inspect configuration without loading weights or touching CUDA:
-
-```bash
-python extensions/minimax-h3-forge-neo/tools/diagnose.py \
-  --model /workspace/forge/models/Stable-diffusion/model.safetensors \
-  --text-encoder /workspace/forge/models/text_encoder/encoder.safetensors \
-  --video-vae /workspace/forge/models/VAE/video.safetensors \
-  --audio-vae /workspace/forge/models/VAE/audio.safetensors \
-  --processor /workspace/forge/models/H3/processor
-```
-
-The paths above are examples. `ready: true` means schemas, safetensors containers, local processor/tokenizer construction, the pinned package and FFmpeg passed inspection. It does not prove CUDA compatibility or sufficient VRAM. Processor construction is local only and occurs before model allocation; incomplete model downloads are rejected using safetensors container validation without loading tensors.
-
-## Local tests
-
-From the extension directory:
+## Local tests (developers)
 
 ```bash
 python -m unittest discover -s tests -v
+python -m ruff check .
 ```
 
-The core suite needs NumPy and Pillow. Actual video checks also need FFmpeg and FFprobe; the optional UI smoke test uses Gradio 4.40.0. Tests for the real runtime and BF16 audio tensors run when DiffSynth/Torch are installed. Set `H3_TEST_PROCESSOR` to a local original FL2VA processor directory to include the offline real-processor check; missing optional dependencies/assets cause their tests to be skipped. The suite performs no inference and downloads no model files. Read `VALIDATION.md` for the exact local evidence and GPU checks still pending.
+The native backend tests need Torch and comfy-kitchen; Gradio is optional. They use the real tensor names and shapes of nine published files (`tests/fixtures/h3_headers.json.gz`, no weights) and stand-ins for Forge Neo (`tests/forge_stubs.py`). They do not replace a GPU run.
 
 ## Source provenance
 
-The integration contract was checked against [Forge Neo](https://github.com/Haoming02/sd-webui-forge-classic/tree/97b26fb404314a11dad7cdde2706da57ea53f4f2). The adapter targets [DiffSynth Studio](https://github.com/modelscope/DiffSynth-Studio/tree/974cfa37f27ac55eba3b6d10efa21f876900572d), using its public H3 pipeline and local ModelConfig API. Architecture schema identifiers in `forge_h3/schemas.json` come from that revision's model registry. These identifiers describe tensor layouts, not proprietary weights.
-
-Research also used the [MiniMax H3 integration reference](https://github.com/MiniMax-AI/awesome-minimax-h3-integration) and the [official MiniMax H3 repository](https://github.com/MiniMax-AI/MiniMax-H3). Model/runtime licenses remain those of their authors. No model weights or upstream implementation are bundled in this package.
+- ComfyUI `e9027f2`: `comfy/ldm/minimax/`, `comfy/text_encoders/minimax.py`, `comfy/model_base.py` (`MiniMaxH3`), `comfy_extras/nodes_minimax_h3.py`.
+- Forge Neo `97b26fb` (GPU tests) and `d70373e` (source reading).
+- Comfy-Org/MiniMax-H3 `e5eb578` and MiniMaxAI/MiniMax-H3 `42ed227` for the model files.
