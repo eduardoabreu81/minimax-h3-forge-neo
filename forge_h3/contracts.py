@@ -10,6 +10,10 @@ MAX_FRAMES = 362
 FRAME_STEP = 17
 DEFAULT_FRAMES = 124
 STILL_FRAMES = MIN_FRAMES
+# the audio stream's flow shift (ComfyUI's ModelSamplingMiniMaxH3 default and range)
+AUDIO_SHIFT = 3.0
+MIN_AUDIO_SHIFT = 0.01
+MAX_AUDIO_SHIFT = 100.0
 
 
 class H3Error(RuntimeError):
@@ -60,6 +64,7 @@ class GenerationRequest:
     include_audio: bool = True
     first_frame: bool = False
     last_frame: bool = False
+    audio_shift: float = AUDIO_SHIFT
 
     def __post_init__(self):
         if self.output not in ("Video", "Still image"):
@@ -71,6 +76,12 @@ class GenerationRequest:
         self.height = integer(self.height, "Height")
         if min(self.width, self.height) < 64 or self.width % 32 or self.height % 32:
             raise H3Error("H3 width and height must be multiples of 32, at least 64.")
+        try:
+            self.audio_shift = float(self.audio_shift)
+        except (TypeError, ValueError):
+            raise H3Error("H3 Audio shift must be a number.") from None
+        if not MIN_AUDIO_SHIFT <= self.audio_shift <= MAX_AUDIO_SHIFT:
+            raise H3Error(f"H3 Audio shift must be between {MIN_AUDIO_SHIFT} and {MAX_AUDIO_SHIFT:g}.")
         if self.output == "Still image":
             self.frames = STILL_FRAMES
             self.include_audio = False

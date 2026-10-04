@@ -59,6 +59,7 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         # Forge's Shift slider (the "h3" UI preset) sets the video flow shift; the audio stream keeps its own
         self.use_shift = True
         self.video_shift = VIDEO_SHIFT
+        self.audio_shift = AUDIO_SHIFT
         self.generation: Generation | None = None
 
         # FL2VA keyframes, (1, H, W, 3) in [0, 1] at the output size: the first frame comes from img2img's input image
@@ -81,13 +82,18 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         self.video_shift = shift
         self.forge_objects.unet.model.diffusion_model.sigma_shift_video = shift
 
+    def set_audio_shift(self, shift: float) -> None:
+        """The audio stream's flow shift (ComfyUI's ModelSamplingMiniMaxH3 shift_audio); set for every H3 generation."""
+        self.audio_shift = float(shift)
+        self.forge_objects.unet.model.diffusion_model.sigma_shift_audio = self.audio_shift
+
     def prepare(self, frames: int, width: int, height: int, seed: int) -> tuple[int, ...]:
         """Start a generation: remember its shapes; returns the shape of the packed latent (without the batch)."""
         shapes = stream_shapes(frames, width, height)
         indices = [index for index, image in ((0, self.first_frame), (frames - 1, self.last_frame)) if image is not None]
         keyframes = [{"resolved_frame_index": index, "latent": latent}
                      for index, latent in zip(indices, self._encode_keyframes(width, height))]
-        self.generation = Generation(shapes=shapes, seed=seed, audio_scale=self.video_shift / AUDIO_SHIFT,
+        self.generation = Generation(shapes=shapes, seed=seed, audio_scale=self.video_shift / self.audio_shift,
                                      keyframes=keyframes, vision_spans=list(self.text_processing_engine_h3.vision_spans))
         self.forge_objects.unet.model.diffusion_model.generation = self.generation
         return (1, 1, shapes.video_size + math.prod(shapes.audio[1:]))

@@ -9,7 +9,7 @@ import uuid
 from pathlib import Path
 
 from . import keyframes
-from .contracts import FPS, GenerationRequest, H3Error, set_pending_error
+from .contracts import AUDIO_SHIFT, FPS, GenerationRequest, H3Error, set_pending_error
 from .media import export_video, find_ffmpeg
 from .models import inspect_model, resolve_components
 
@@ -63,12 +63,12 @@ def validate_processing(p):
         raise H3Error("Select Script: None for H3 generation. Script combinations are not validated yet.")
 
 
-def before_process(p, output, include_audio):
+def before_process(p, output, include_audio, audio_shift=AUDIO_SHIFT):
     """Before Forge loads the model: check the request and turn Frames into a single H3 generation."""
     p.h3_request = None
     set_pending_error(None)
     try:
-        _before_process(p, output, include_audio)
+        _before_process(p, output, include_audio, audio_shift)
     except H3Error as error:
         set_pending_error(error)
         raise
@@ -81,7 +81,7 @@ def validate_img2img(p):
         raise H3Error("H3 does not take the latent upscale resize mode. Choose another Resize mode.")
 
 
-def _before_process(p, output, include_audio):
+def _before_process(p, output, include_audio, audio_shift):
     p.h3_last_frame = None
     info = select_h3(p)
     if info is None:
@@ -99,7 +99,7 @@ def _before_process(p, output, include_audio):
         print("[MiniMax H3] FastH3 checkpoint: use 8 steps and Shift 10; it runs with dense attention for now")
     last = keyframes.last_frame(p, p.width, p.height)
     request = GenerationRequest(width=p.width, height=p.height, frames=p.batch_size, output=output, include_audio=include_audio,
-                                first_frame=is_img2img, last_frame=last is not None)
+                                first_frame=is_img2img, last_frame=last is not None, audio_shift=audio_shift)
     if request.output == "Video":
         find_ffmpeg(getattr(shared.opts, "h3_ffmpeg_path", ""))
     p.h3_request = request
@@ -128,6 +128,7 @@ def process(p):
     if request.keyframes or engine.keyframe_images():
         p.clear_prompt_cache()
     engine.set_keyframes(keyframes.to_tensor(last) if last is not None else None)
+    engine.set_audio_shift(request.audio_shift)
     p.extra_generation_params.update({"H3 Variant": "FastH3"} if getattr(p, "h3_fast", False) else {})
     p.extra_generation_params.update({"H3 First frame": True} if request.first_frame else {})
     p.extra_generation_params.update({"H3 Last frame": True} if request.last_frame else {})
@@ -141,6 +142,8 @@ def process(p):
         p.distilled_cfg_scale = getattr(shared.opts, f"{PRESET}_t2i_dcfg", SHIFT)
     p.extra_generation_params.update({"H3 Frames": request.frames, "H3 FPS": FPS,
                                       "H3 Audio": request.include_audio, "H3 Output": request.output})
+    if request.audio_shift != AUDIO_SHIFT:
+        p.extra_generation_params["H3 Audio shift"] = request.audio_shift
 
 
 def before_sampling(p, noise):

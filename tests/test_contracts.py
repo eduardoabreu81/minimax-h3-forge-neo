@@ -127,6 +127,13 @@ class RequestTests(unittest.TestCase):
         self.assertEqual(request.frames, 5)
         self.assertFalse(request.include_audio)
 
+    def test_audio_shift_is_checked(self):
+        self.assertEqual(GenerationRequest().audio_shift, 3.0)
+        self.assertEqual(GenerationRequest(audio_shift="6").audio_shift, 6.0)
+        for value in (0, 101, "loud"):
+            with self.assertRaisesRegex(H3Error, "Audio shift"):
+                GenerationRequest(audio_shift=value)
+
     def test_invalid_grid_and_dimensions_are_not_silently_changed(self):
         with self.assertRaisesRegex(H3Error, "17n"):
             GenerationRequest(frames=125)

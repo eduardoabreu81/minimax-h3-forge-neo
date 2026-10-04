@@ -5,7 +5,7 @@ import logging
 
 import gradio as gr
 
-from .contracts import DEFAULT_FRAMES, FPS, H3Error
+from .contracts import AUDIO_SHIFT, DEFAULT_FRAMES, FPS, H3Error
 from .integration import checkpoint_info
 from .models import ROLE_LABELS, inspect_model
 from .ui_state import frame_view, preset_frame_view
@@ -42,6 +42,9 @@ class Panel:
             self.output = gr.Radio(["Video", "Still image"], value="Video", label="Output",
                                    visible=not is_img2img, elem_id=f"{self.tab}_h3_output")
             self.audio = gr.Checkbox(value=True, label="Include generated audio", elem_id=f"{self.tab}_h3_audio")
+            # the audio stream's own flow shift; Shift (the h3 preset slider) is the video one
+            self.audio_shift = gr.Slider(minimum=1.0, maximum=20.0, step=0.5, value=AUDIO_SHIFT, label="Audio shift",
+                                         elem_id=f"{self.tab}_h3_audio_shift")
             if is_img2img:
                 gr.Markdown("The input image is the **first frame**; Denoising strength is not used. For a **last frame** "
                             "too, add one image to the **ImageStitch Integrated** gallery.")
@@ -57,7 +60,7 @@ class Panel:
 
     @property
     def inputs(self):
-        return [self.output, self.audio]
+        return [self.output, self.audio, self.audio_shift]
 
     @property
     def needed(self):
@@ -85,7 +88,7 @@ class Panel:
                      if hasattr(c, key)} for c in native]
         preset_input = [preset] if preset is not None else []
         inputs = [checkpoint, self.output, modules, self.saved] + native + preset_input
-        outputs = [self.accordion, self.audio, duration, self.status, self.summary, self.saved] + native + preset_input
+        outputs = [self.accordion, self.audio, self.audio_shift, duration, self.status, self.summary, self.saved] + native + preset_input
 
         def update(value, output, module_values, saved, *values):
             preset_value = values[-1] if preset is not None else None
@@ -135,6 +138,7 @@ class Panel:
                     error = str(exc)
             status = html.escape(error) if error else ("H3 generates audio jointly. This checkbox controls audio in the exported video." if output == "Video" else "Still image uses the first frame of a 5-frame H3 generation.")
             return [gr.update(visible=active), gr.update(visible=active and output == "Video"),
+                    gr.update(visible=active and output == "Video"),
                     gr.update(value=f"{frames} frames / {FPS} FPS = {frames / FPS:.2f} seconds" if active else "",
                               visible=active and output == "Video"), status, summary, saved] + updates + (
                                   [gr.update()] if preset is not None else [])

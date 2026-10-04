@@ -140,9 +140,9 @@ class FlowTests(unittest.TestCase):
         engine.first_frame = engine.last_frame = None
         return engine
 
-    def run_until_sampling(self, p, encode=True):
+    def run_until_sampling(self, p, encode=True, audio_shift=3.0):
         """before_process .. process_before_every_sampling, as Forge calls them; returns the conditioning."""
-        integration.before_process(p, "Video", True)
+        integration.before_process(p, "Video", True, audio_shift)
         p.sd_model = self.engine
         integration.process(p)
         if encode and isinstance(p, Img2Img):
@@ -177,6 +177,20 @@ class FlowTests(unittest.TestCase):
         dit = self.engine.forge_objects.unet.model.diffusion_model
         out = dit(p.modified_noise, torch.tensor([900.0]), cond[0].unsqueeze(0))
         self.assertEqual(out.shape, p.modified_noise.shape)
+        self.assertTrue(torch.isfinite(out).all())
+
+    def test_audio_shift_reaches_the_model_and_the_infotext(self):
+        p = Txt2Img()
+        self.run_until_sampling(p)
+        dit = self.engine.forge_objects.unet.model.diffusion_model
+        # the default (3) keeps the infotext as before; the audio rides on the video schedule scaled by 12 / 3
+        self.assertNotIn("H3 Audio shift", p.extra_generation_params)
+        self.assertEqual((dit.sigma_shift_audio, self.engine.generation.audio_scale), (3.0, 4.0))
+        p = Txt2Img()
+        cond = self.run_until_sampling(p, audio_shift=6)
+        self.assertEqual(p.extra_generation_params["H3 Audio shift"], 6.0)
+        self.assertEqual((dit.sigma_shift_audio, self.engine.generation.audio_scale), (6.0, 2.0))
+        out = dit(p.modified_noise, torch.tensor([900.0]), cond[0].unsqueeze(0))
         self.assertTrue(torch.isfinite(out).all())
 
     def test_txt2img_gallery_is_the_last_frame_only(self):

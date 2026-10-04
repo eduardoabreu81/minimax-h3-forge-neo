@@ -42,10 +42,11 @@ class Script(scripts.Script):
 
     def ui(self, is_img2img):
         self.panel = ui.Panel(is_img2img)
+        self.infotext_fields = [(self.panel.audio_shift, "H3 Audio shift")]
         return self.panel.inputs
 
-    def before_process(self, p, output="Video", include_audio=True, *args):
-        integration.before_process(p, output, include_audio)
+    def before_process(self, p, output="Video", include_audio=True, audio_shift=3.0, *args):
+        integration.before_process(p, output, include_audio, audio_shift)
 
     def process(self, p, *args):
         integration.process(p)
