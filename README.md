@@ -3,7 +3,7 @@
 <div align="center">
 
 [![Forge Neo](https://img.shields.io/badge/Forge-Neo-blue)](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)
-[![Version](https://img.shields.io/badge/Version-0.3.0-brightgreen)](https://github.com/eduardoabreu81/minimax-h3-forge-neo)
+[![Version](https://img.shields.io/badge/Version-0.4.0-brightgreen)](https://github.com/eduardoabreu81/minimax-h3-forge-neo)
 ![Status](https://img.shields.io/badge/Status-Work_in_progress-orange)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-green)](LICENSE)
 
@@ -33,6 +33,14 @@ Generate **videos with sound** with **[MiniMax H3](https://github.com/MiniMax-AI
 ---
 
 ## 🆕 What's New
+
+### v0.4.0 - Faster Attention, Sharper Preview, More Sound Control
+
+- **Sparse Attention made for H3** - with **Sparse Attention Integrated** on, H3 keeps the prompt and the soundtrack exact and speeds up long clips by up to a quarter
+- **FastH3 at full speed** - its own sparse attention (VSA), about 25% faster on long clips
+- **Sharp live preview** - choose **TAESD** to watch a clear frame of the clip while it is generated
+- **Audio shift** - a new slider that changes the delivery and timing of the sound
+- **Faster turbo LoRAs in fp16 LoRA mode** - half the extra cost of applying a LoRA on the fly
 
 ### v0.3.0 - Pictures, Faster Models and Live Preview
 
@@ -82,6 +90,7 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 ### 🔊 Video and Sound Together
 
 - Describe what happens and what it sounds like in one prompt - footsteps, rain, engines, music, a line of dialogue
+- **Audio shift** slider to vary how speech and sound are delivered
 - Picture and sound are generated together and saved as one MP4, shown in Forge's usual result area
 - Up to **15 seconds** per clip, at 24 frames per second
 - **Include generated audio** checkbox for a silent video
@@ -106,10 +115,10 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 ### ⚡ Faster Generation
 
 - **Turbo LoRAs** - 8 steps instead of 20, about twice as fast
-- **FastH3** - a distilled 8-step checkpoint, no LoRA needed
+- **FastH3** - a distilled 8-step checkpoint, no LoRA needed, with the sparse attention it was trained with
 - **Community turbo checkpoints** that already include the distillation
-- **Sparse Attention Integrated** - faster long clips
-- **Live preview** of the clip while it is generated
+- **Sparse Attention Integrated** - long clips up to a quarter faster, with the prompt and the soundtrack kept exact
+- **Live preview** of the clip while it is generated, sharp with the **TAESD** method
 
 ### 🧠 Forge Memory Management
 
@@ -158,6 +167,17 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 | **Turbo LoRA** at weight 1 | Res Multistep | Simple | 8, or 12 with speech | 1 | 6 |
 | **FastH3** checkpoint | Res Multistep | Simple | 8 | 1 | 10 |
 
+Start from the **h3** preset and change the steps and Shift by hand for a turbo LoRA or FastH3.
+
+**Sparse Attention Integrated** - speeds up long clips:
+
+| Scene | Timestep Range | Extra Tokens | Saves |
+| :--- | :--- | :--- | :--- |
+| Simple motion (walking, running, talking) | 0.15 - 0.85 (the default) | 0 | about 25% |
+| Turns, spins, flips, vehicles cornering | **0.50 - 1.00** | 256 | about 15% |
+
+With the default range, a person or object turning on itself may "morph" instead of rotating; starting at 0.50 keeps the motion of the regular result. With FastH3 the same switch turns on its own sparse attention.
+
 **Width and Height** must be multiples of 32. The model looks best at **768 on the short side** - 1152x768, 768x1152, 1024x576 or 576x1024. Use at least 544 with a turbo LoRA.
 
 **Frames** sets the length, at 24 frames per second:
@@ -176,12 +196,16 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 
 - Start with a short, small clip to check your setup, then go longer
 - Describe the sounds you want, and say whether there should be dialogue or music - "No music, no subtitles" works well
+- Give background sounds a moment and some weight - "At 3 seconds a train pulls in with a loud screech of brakes" is heard; "a train in the background" may not be. Use 20 steps when they matter
+- Music can be described like a producer would - genre, tempo and instruments, for example "a K-pop trap beat at 160 BPM with a heavy 808 bass, below the voices"
+- Try **Audio shift** 6 for a different delivery of the same line - neither value is better, they are different takes
 - Put dialogue in quotes after who says it, and keep it short for the clip length
 - For several events, put them in order, give timings for long clips, and leave time for the last one
 - At CFG 1 the negative prompt is not used - say what you do not want in the prompt itself
 - From a picture, describe the motion and the sound, not what the picture already shows
 - For first and last frame, use pictures with the same proportions as the video; the last frame is cropped to the video size
-- With a turbo LoRA on long clips, set **Diffusion in Low Bits** to **Automatic (fp16 LoRA)** to save system RAM
+- With a turbo LoRA on long clips, set **Diffusion in Low Bits** to **Automatic (fp16 LoRA)** to save system RAM; on shorter clips the default **Automatic** is slightly faster
+- For a sharp live preview, set **Live Preview Method** to **TAESD** in Forge's settings - the preview decoder downloads by itself
 - Restart Forge before changing the text encoder
 - Keep the same seed when comparing settings
 - Keep the MP4 and the JSON file saved next to it - it records the settings
@@ -197,7 +221,8 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 - **[ComfyUI](https://github.com/Comfy-Org/ComfyUI)** - reference implementation of the model
 - **[Comfy-Org](https://huggingface.co/Comfy-Org/MiniMax-H3)** - the model files and the turbo LoRA
 - **[FastVideo](https://huggingface.co/FastVideo/FastVideo-FastH3-8-Step-V2)** - FastH3
-- **[Kijai](https://huggingface.co/Kijai)** - the INT8 video VAE and the taeh3 preview decoder
+- **[Kijai](https://huggingface.co/Kijai)** - the INT8 video VAE
+- **[madebyollin](https://github.com/madebyollin/taehv)** - the taeh3 live preview decoder
 - **[larryvrh](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora)** and **[lightx2v](https://github.com/ModelTC/Minimax-H3-Turbo)** - turbo LoRAs and settings
 
 ---

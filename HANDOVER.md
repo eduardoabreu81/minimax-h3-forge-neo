@@ -1,6 +1,6 @@
 # MiniMax H3 for Forge Neo: handover
 
-Updated: 2026-10-04, America/Sao_Paulo. Version 0.3.0, work in progress. H3 runs on a native Forge Neo backend (since 0.2.0). First and last frame, FastH3, community INT8/W4A8 checkpoints, Kijai's INT8 video VAE, the RGB live preview and the early release of a replaced H3 model were validated on an A40 on 2026-10-04. This roadmap describes future work; it does not authorize paid resources.
+Updated: 2026-10-04 (night), America/Sao_Paulo. Version 0.4.0, work in progress. 0.4.0 adds the Audio shift slider, H3's own sparse attention and FastH3's VSA (`native/sparse.py`), madebyollin's temporal taeh3 preview and on-the-fly LoRAs as low-rank terms (`native/lora.py`), all validated on an A40 the same night. H3 runs on a native Forge Neo backend (since 0.2.0). First and last frame, FastH3, community INT8/W4A8 checkpoints, Kijai's INT8 video VAE, the RGB live preview and the early release of a replaced H3 model were validated on an A40 on 2026-10-04. This roadmap describes future work; it does not authorize paid resources.
 
 ## Decisions to preserve
 
@@ -48,6 +48,8 @@ Pins: Forge Neo `97b26fb` (GPU tests), ComfyUI `e9027f2` (port source), Comfy-Or
 | `forge_h3/native/video_vae.py`, `audio_vae.py`, `vae.py` | VAEs and conversion of the original MiniMax files |
 | `forge_h3/native/streams.py` | Packed video+audio latent, generation state, token tags |
 | `forge_h3/native/presets.py` | The h3 UI preset |
+| `forge_h3/native/sparse.py` | H3 sparse attention and FastH3 VSA on comfy-kitchen's sol_attn |
+| `forge_h3/native/lora.py` | On-the-fly LoRAs as low-rank terms on INT8 layers |
 | `forge_h3/native/release.py` | Early release of a replaced H3 model |
 | `forge_h3/native/taeh3.py` | taeh3 preview decoder for Forge's TAESD live preview |
 | `tests/` | CPU tests; `forge_stubs.py` stands in for Forge Neo |
@@ -60,11 +62,8 @@ A low-resolution draft, then `MinimaxH3LatentUpscaler3D` (LBH-123-AI, MIT, a 3D 
 
 ### 2. Speed
 
-- Turbo and FastH3 presets (8 steps; Shift 6 / 10) with a warning below 544p.
-- LoRA: Forge computes LoRA-patched INT8 layers in full precision (`forge_force_cast_weights`), about 42-50% slower per step. Work around it in the extension only.
-- FastH3's VSA (BlockSparseAttention); SageAttention (needs a cu130 build); sparse attention that keeps text and audio rows exact, as ComfyUI does.
-- Configurable audio shift (fixed at 3; Seed Hunter uses 6).
-- Find why the taeh3 TAESD preview captured nothing on the GPU.
+- Check comfy-kitchen's `int8_attention` with the H3 INT8 checkpoints (an earlier INT8 attention crashed with them, ComfyUI #15529).
+- On-the-fly LoRA still costs ~10% per step; merged costs nothing.
 
 ### 3. Memory
 

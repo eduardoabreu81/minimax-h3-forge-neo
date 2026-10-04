@@ -1,4 +1,4 @@
-# Validation: 0.3.0
+# Validation: 0.4.0
 
 GPU sessions on 2026-10-03 and 2026-10-04 (America/Sao_Paulo), CPU tests on 2026-10-04. The published examples, with prompts and settings, are in the wiki's [Examples](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Examples) page; the full measurement tables are in [Performance and Memory](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Performance-and-Memory).
 
@@ -7,6 +7,23 @@ GPU sessions on 2026-10-03 and 2026-10-04 (America/Sao_Paulo), CPU tests on 2026
 One NVIDIA A40 (48 GB) with about 50 GB of system RAM (46.6 GiB container limit), RunPod, three Pods in two regions. Forge Neo `97b26fb` (`neo-2.29.2`), Python 3.13, Torch 2.13 cu130, comfy-kitchen 0.2.36 with its CUDA backend, PyTorch SDPA attention. Standard model set: Comfy-Org pruned INT8 ConvRot DiT, INT8 ConvRot text encoder, fp16 video VAE and fp32 audio VAE (revision `e5eb578`).
 
 Requests went through Forge's API (`/sdapi/v1/txt2img` and `img2img`), which runs the same processing as the Generate button. Times are wall time for the whole request, model loading included when the model was not loaded yet. RAM was sampled once per second.
+
+## 0.4.0 features (A40, EU-SE-1, 2026-10-04)
+
+Same software and model set. comfy-kitchen 0.2.36 on the A40 reports `sol_attn`, `int8_attention` and `flash_attention_decode` available. Regression first: bird 96.0 s (cold), laundromat 176.6 s.
+
+| Feature | Check | Result |
+| --- | --- | --- |
+| Audio shift | Talking close-up 960×544/73, 20 steps, shift 3 and 6 | Both generated (137.1 / 120.6 s); infotext `H3 Audio shift: 6.0`; at 6 the line is delivered with a different rhythm and ~1 dB louder. Neither is better. |
+| H3 sparse attention | Motorcycle 1024×576/192, Euler 12, default range | 276.7 s (dense 380.6, Forge's own sparse 293.7); text and audio rows exact (`sinks (0, 17)/(6, 17)`) |
+| Sparse range | Skateboarder 180° spin, 1024×576/124, 20 steps, seed 42 | Dense 273 s of sampling, lands backwards as prompted. Default range 200 s, from 0.30 206 s, tau 0.8 214 s: the rider turns back to the front (lost rotation). From 0.50 with 256 extra tokens: 231 s, lands backwards like the dense clip. |
+| Sparse range | Dog turning on a beach, same size, seed 7 | Dense 270 s, from 0.30 202 s: equivalent |
+| FastH3 VSA | Motorcycle 1024×576/192, 8 steps, Shift 10 | 218.4 s against 294.7 s full attention (`VSA tiles (39488 padded rows, 17 prefix tiles)`); clean |
+| FastH3 VSA | Talking close-up 1152×768/73 against the regular model at 20 steps | Both good; FastH3 louder (-24.5 against -30.4 dB), the regular model more natural in its surroundings |
+| LoRA, merged | Laundromat 448×672/158, 8 steps, with and without the turbo LoRA | 76 s of sampling either way: no cost per step |
+| LoRA, on the fly | Drummer 960×544/124, 8 steps: merged / on the fly (0.4.0) / Forge's own on the fly | 111 / 122 / 134 s of sampling; 0.4.0 closer to the merged result (18.8 against 14.8 dB PSNR) |
+| taeh3 preview | Talking close-up, TAESD method, previews at steps 3, 10, 18 | madebyollin's taeh3 downloaded by itself; full-size previews, clear from step 10; no error |
+| Background sound | Drummer prompt with "a train arriving in the background" at 8 steps, then the train given a time and a screech at 20 steps | Missing at 8 steps in every LoRA mode; present at 20 steps with the stronger description |
 
 ## Text to video with sound
 
@@ -95,7 +112,6 @@ They do not load weights or run kernels at full size.
 
 ## Still pending
 
-- The taeh3 TAESD preview: the decoder downloads, but no preview image was captured in the GPU test.
 - GPUs other than the A40, and machines with less than about 50 GB of RAM.
 - Formal review of audio quality and audio-video synchronization.
 - The full INT8 DiT, GGUF files, FastH3's sparse attention (VSA), multiple references and uploaded-audio conditioning.
