@@ -147,7 +147,21 @@ class SparseTests(unittest.TestCase):
         sinks = attention.sinks(layout, layout.seq_len)
         self.assertEqual((tuple(captured[0]["sink_blocks"]), tuple(captured[0]["sink_q"])), sinks)
         # the pooled key statistics carry over to the next step, per block and conditioning branch
-        self.assertEqual(set(attention.pooled), {(0, layout.seq_len, (0,)), (1, layout.seq_len, (0,))})
+        self.assertEqual(set(attention.pooled), {(0, layout.seq_len, 0), (1, layout.seq_len, 0)})
+
+    def test_prompt_and_negative_prompt_keep_their_own_statistics(self):
+        from forge_h3.native import sparse
+        from forge_h3.native.streams import Generation, stream_shapes
+        from test_native import tiny_dit
+        model = tiny_dit(17)
+        shapes = stream_shapes(frames=22, width=96, height=64)
+        attention = sparse.SparseAttention(min_tokens=0)
+        model.generation = Generation(shapes=shapes, seed=1, audio_scale=4.0, sparse=attention)
+        packed = torch.cat([shapes.pack(torch.randn(shapes.video), torch.randn(shapes.audio))] * 2)
+        with patch.object(sparse.SparseAttention, "eligible", lambda *args: True),                 patch.object(sparse.ck, "sol_attn_chunked", reference_chunked([]), create=True), torch.inference_mode():
+            model(packed, torch.tensor([700.0, 700.0]), torch.randn(2, 7, 48),
+                  transformer_options={"sigmas": torch.tensor([0.7, 0.7]), "cond_or_uncond": [0, 1]})
+        self.assertEqual({key[2] for key in attention.pooled}, {0, 1})
 
     def test_vsa_path_matches_dense_attention_and_fills_the_gate(self):
         captured, attention = self.check_matches_dense(vsa=True)

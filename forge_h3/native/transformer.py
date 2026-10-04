@@ -190,8 +190,9 @@ class MiniMaxH3Model(nn.Module):
         with lora.low_rank(self):
             for i in range(x.shape[0]):
                 video, audio = shapes.unpack(x[i:i + 1])
-                v, a = self.forward_streams([video, audio], timestep[i:i + 1], context[i:i + 1], options,
-                                            minimax_payload=payload)
+                # the batch item (prompt / negative prompt) keeps its own sparse-attention statistics
+                v, a = self.forward_streams([video, audio], timestep[i:i + 1], context[i:i + 1],
+                                            {**options, "minimax_h3_item": i}, minimax_payload=payload)
                 outputs.append(shapes.pack(v, a))
         return torch.cat(outputs)
 

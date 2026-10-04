@@ -172,8 +172,8 @@ class SparseAttention:
             plan = self.vsa_plan(transformer_options["minimax_h3_layout"], x.device)
             n = plan["n"]
             freqs = self.vsa_rope_freqs(rope_freqs, plan)
-        # statistics per block and per conditioning branch (prompt / negative prompt)
-        key = (block_index, n, tuple(transformer_options.get("cond_or_uncond", ())))
+        # statistics per block and per conditioning branch: the DiT runs prompt and negative prompt one at a time
+        key = (block_index, n, transformer_options.get("minimax_h3_item", 0))
         pooled = self.pooled.get(key)
         first = pooled is None
         if first:
