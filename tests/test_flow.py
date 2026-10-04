@@ -217,6 +217,21 @@ class FlowTests(unittest.TestCase):
         attention = self.engine.generation.sparse
         self.assertEqual((attention.vsa, attention.topk_ratio), (True, sparse.VSA_KEEP_RATIO))
 
+    def test_shift_follows_each_h3_preset_and_low_sizes_are_noted(self):
+        from modules import shared
+        p = Txt2Img()
+        self.run_until_sampling(p)
+        # outside the H3 presets the slider belongs to another model: H3 keeps 12
+        self.assertEqual(p.distilled_cfg_scale, 12.0)
+        shared.opts.forge_preset = "h3_turbo"
+        self.addCleanup(setattr, shared.opts, "forge_preset", "sd")
+        p = Txt2Img()
+        p.is_api = True  # an API request without distilled_cfg_scale arrives with Forge's 3.5
+        with patch("builtins.print") as printed:
+            self.run_until_sampling(p)
+        self.assertEqual(p.distilled_cfg_scale, 6.0)
+        self.assertTrue(any("below 544" in str(call) for call in printed.call_args_list))
+
     def test_txt2img_gallery_is_the_last_frame_only(self):
         p = Txt2Img(gallery=Image.new("RGB", (64, 64), "green"))
         self.run_until_sampling(p)
