@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 
 from ..contracts import raise_pending_error
-from . import kernels
+from . import kernels, lora
 from .dit import (
     SEGMENT_TAG,
     DiTBlock,
@@ -186,11 +186,13 @@ class MiniMaxH3Model(nn.Module):
         if generation.sparse is not None:
             options["minimax_h3_sparse"] = generation.sparse
         outputs = []
-        for i in range(x.shape[0]):
-            video, audio = shapes.unpack(x[i:i + 1])
-            v, a = self.forward_streams([video, audio], timestep[i:i + 1], context[i:i + 1], options,
-                                        minimax_payload=payload)
-            outputs.append(shapes.pack(v, a))
+        # on-the-fly LoRAs keep the INT8 matmuls, with the LoRA as a low-rank term (native/lora.py)
+        with lora.low_rank(self):
+            for i in range(x.shape[0]):
+                video, audio = shapes.unpack(x[i:i + 1])
+                v, a = self.forward_streams([video, audio], timestep[i:i + 1], context[i:i + 1], options,
+                                            minimax_payload=payload)
+                outputs.append(shapes.pack(v, a))
         return torch.cat(outputs)
 
     def _layout(self, text_len, shapes, keyframes=()):
