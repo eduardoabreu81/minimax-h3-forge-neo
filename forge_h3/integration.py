@@ -133,17 +133,13 @@ def process(p):
     p.extra_generation_params.update({"H3 First frame": True} if request.first_frame else {})
     p.extra_generation_params.update({"H3 Last frame": True} if request.last_frame else {})
 
-    from .native.presets import PRESETS, SHIFT, is_h3_preset, low_resolution_warning
-    preset = getattr(shared.opts, "forge_preset", None)
-    if not is_h3_preset(preset):
-        # outside the h3 presets the slider is another model's Distilled CFG; keep H3's own shift (and infotext)
+    from .native.presets import PRESET, SHIFT
+    if getattr(shared.opts, "forge_preset", None) != PRESET:
+        # outside the h3 preset the slider is another model's Distilled CFG; keep H3's own shift (and infotext)
         p.distilled_cfg_scale = SHIFT
     elif getattr(p, "is_api", False) and p.distilled_cfg_scale == API_DEFAULT_DISTILLED_CFG:
         # an API request that leaves distilled_cfg_scale out gets Forge's Flux default; use the preset's Shift
-        p.distilled_cfg_scale = getattr(shared.opts, f"{preset}_t2i_dcfg", PRESETS[preset]["shift"])
-    warning = low_resolution_warning(preset, getattr(p, "h3_fast", False), request.width, request.height)
-    if warning:
-        print(warning)
+        p.distilled_cfg_scale = getattr(shared.opts, f"{PRESET}_t2i_dcfg", SHIFT)
     p.extra_generation_params.update({"H3 Frames": request.frames, "H3 FPS": FPS,
                                       "H3 Audio": request.include_audio, "H3 Output": request.output})
     if request.audio_shift != AUDIO_SHIFT:

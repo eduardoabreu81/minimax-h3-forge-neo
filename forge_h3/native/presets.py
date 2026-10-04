@@ -1,6 +1,5 @@
-"""The "h3", "h3_turbo" and "h3_fast" UI presets, added at runtime: PresetArch gains members and their options are
-registered through Forge Neo's own presets.register, so they match every other preset (as in the Qwen-Image 2.1
-extension). Like any preset, each one remembers its own checkpoint, modules and Diffusion in Low Bits setting.
+"""An "h3" UI preset, added at runtime: PresetArch gains a member and the preset's options are registered through
+Forge Neo's own presets.register, so they match every other preset (as in the Qwen-Image 2.1 extension).
 
 Frames are left out on purpose: Forge's video presets step the Frames slider by the frame rate, while H3 needs its
 17n + 5 grid, which the H3 panel sets when an H3 checkpoint is selected.
@@ -12,34 +11,13 @@ from modules_forge import presets
 
 PRESET = "h3"
 
-# Res Multistep / Simple / CFG 1 for all; steps and the video flow shift per use:
-# the base model (the reference workflows), the turbo LoRAs (8 steps, 12 with speech; Shift 6 as lightx2v
-# recommends for its 768p LoRA) and the FastH3 checkpoint (its recipe)
+# the base settings of the reference workflows; with the 8-step turbo LoRA, 8 steps (12 for usable speech)
 SAMPLER = "Res Multistep"
 SCHEDULER = "Simple"
+STEPS = 20
 CFG = 1.0
-PRESETS = {
-    "h3": {"steps": 20, "shift": 12.0},
-    "h3_turbo": {"steps": 8, "shift": 6.0},
-    "h3_fast": {"steps": 8, "shift": 10.0},
-}
-STEPS = PRESETS[PRESET]["steps"]
-# the video flow shift of the model definition
-SHIFT = PRESETS[PRESET]["shift"]
-# the turbo LoRAs and FastH3 were distilled at 544p and up; below it they distort
-FAST_MIN_SIDE = 544
-
-
-def is_h3_preset(name) -> bool:
-    return name in PRESETS
-
-
-def low_resolution_warning(preset, fast_checkpoint, width, height) -> str | None:
-    """A console note when a few-step setup runs below the size it was distilled for."""
-    if min(width, height) >= FAST_MIN_SIDE or not (fast_checkpoint or preset in ("h3_turbo", "h3_fast")):
-        return None
-    return (f"[MiniMax H3] {width}x{height} is below {FAST_MIN_SIDE} on the short side: few-step setups (turbo LoRA, "
-            f"FastH3) were distilled at 544p and up and can distort here")
+# the video flow shift of the model definition; the 768p turbo LoRA wants 6, FastH3 10
+SHIFT = 12.0
 
 
 def _add_enum_member(enum_cls: type[Enum], name: str) -> Enum:
@@ -64,19 +42,19 @@ def _add_enum_member(enum_cls: type[Enum], name: str) -> Enum:
 
 
 def _is_preset_option(key: str) -> bool:
-    return any(key.startswith(f"{name}_") or key.endswith(f"_{name}") for name in PRESETS)
+    return key.startswith(f"{PRESET}_") or key.endswith(f"_{PRESET}")
 
 
 def register() -> None:
-    from modules import shared
+    arch = _add_enum_member(presets.PresetArch, PRESET)
 
-    for name, values in PRESETS.items():
-        arch = _add_enum_member(presets.PresetArch, name)
-        presets.SAMPLERS[arch] = SAMPLER
-        presets.SCHEDULERS[arch] = SCHEDULER
-        presets.STEPS[arch] = values["steps"]
-        presets.CFG[arch] = CFG
-        presets.SHIFT[arch] = values["shift"]
+    presets.SAMPLERS[arch] = SAMPLER
+    presets.SCHEDULERS[arch] = SCHEDULER
+    presets.STEPS[arch] = STEPS
+    presets.CFG[arch] = CFG
+    presets.SHIFT[arch] = SHIFT
+
+    from modules import shared
 
     templates: dict = {}
     presets.register(templates)
