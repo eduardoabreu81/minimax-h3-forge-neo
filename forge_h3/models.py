@@ -102,7 +102,9 @@ def inspect_model(path):
     if role is None:
         return None
     metadata = json.dumps(header.get("__metadata__", {})).lower()
-    variant = "fast" if "fasth3" in metadata or "fastvideo" in metadata else "standard"
+    # FastH3 (VSA-trained) carries the sparse-attention gate; repacks may drop its metadata
+    fast = "fasth3" in metadata or "fastvideo" in metadata or "blocks.0.attn.to_gate_compress.weight" in keys
+    variant = "fast" if fast else "standard"
     if role == "video_vae" and any(k.endswith(".comfy_quant") for k in keys):
         variant = "quantized"
     return ModelInfo(path, role, _quantization(header, keys), variant)
@@ -133,8 +135,10 @@ def resolve_components(dit_path, module_paths):
         if item.role in resolved:
             raise H3Error(f"More than one H3 {ROLE_LABELS[item.role]} is selected.")
         resolved[item.role] = item
-    if dit.variant == "fast":
-        raise H3Error("FastH3 checkpoints need their own sparse-attention schedule, which is not available yet. Select a standard H3 FL2VA checkpoint.")
+    if "ref2va" in dit.path.name.lower():
+        # Ref2VA and FL2VA files have the same tensors and no metadata: the name is the only hint
+        raise H3Error("Ref2VA checkpoints (reference-to-video) are not supported yet. Select an FL2VA checkpoint, "
+                      "such as minimax_h3_fl2va_pruned_int8_convrot.")
     if "text_encoder" in resolved and resolved["text_encoder"].quantization == "nvfp4":
         # Forge Neo loads it without a warning, but the conditioning comes out wrong (a prompt for a bird gave a dog)
         raise H3Error("The NVFP4 AWQ text encoder does not encode prompts correctly in Forge Neo yet. Select qwen3vl_32b_minimax_h3_int8_convrot or the bf16 text encoder.")

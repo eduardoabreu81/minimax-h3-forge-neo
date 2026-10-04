@@ -31,6 +31,15 @@ class MiniMaxH3Latent(LatentFormat):
         ]
         self.latent_rgb_factors_bias = [0.057426, -0.022078, -0.071449]
 
+    def latent_rgb_factors_reshape(self, sample):
+        # Forge's RGB live preview (sd_vae_approx.cheap_approximation) reshapes the latent first: the packed
+        # video+audio latent becomes the middle video frame of the generation being sampled
+        from modules import shared
+
+        from .streams import preview_frame
+        generation = getattr(shared.sd_model, "generation", None)
+        return preview_frame(sample, generation.shapes if generation is not None else None)
+
 
 class MiniMaxH3(BASE):
     # absolute path: the loader joins it with its own huggingface folder, and os.path.join keeps an absolute second part

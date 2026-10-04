@@ -92,7 +92,11 @@ def _before_process(p, output, include_audio):
     if is_img2img:
         validate_img2img(p)
     overrides = getattr(p, "override_settings", {})
-    resolve_components(info.filename, module_paths(overrides.get("forge_additional_modules", shared.opts.forge_additional_modules)))
+    components = resolve_components(info.filename, module_paths(overrides.get("forge_additional_modules", shared.opts.forge_additional_modules)))
+    p.h3_fast = components.dit.variant == "fast"
+    if p.h3_fast:
+        # its recipe: 8 steps, video shift 10 (audio 3), VSA sparse attention, which is not ported yet: attention stays dense
+        print("[MiniMax H3] FastH3 checkpoint: use 8 steps and Shift 10; it runs with dense attention for now")
     last = keyframes.last_frame(p, p.width, p.height)
     request = GenerationRequest(width=p.width, height=p.height, frames=p.batch_size, output=output, include_audio=include_audio,
                                 first_frame=is_img2img, last_frame=last is not None)
@@ -124,6 +128,7 @@ def process(p):
     if request.keyframes or engine.keyframe_images():
         p.clear_prompt_cache()
     engine.set_keyframes(keyframes.to_tensor(last) if last is not None else None)
+    p.extra_generation_params.update({"H3 Variant": "FastH3"} if getattr(p, "h3_fast", False) else {})
     p.extra_generation_params.update({"H3 First frame": True} if request.first_frame else {})
     p.extra_generation_params.update({"H3 Last frame": True} if request.last_frame else {})
 

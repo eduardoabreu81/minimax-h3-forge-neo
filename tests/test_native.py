@@ -168,6 +168,19 @@ class ForwardTests(unittest.TestCase):
             v, a = model.forward_streams([video, audio], t[:1], context[:1], minimax_payload={"audio_scale": 4.0})
             self.assertTrue(torch.allclose(packed[:1], shapes.pack(v, a), atol=1e-5))
 
+    def test_live_preview_takes_the_middle_video_frame(self):
+        from forge_h3.native.streams import StreamShapes, preview_frame
+        shapes = StreamShapes(video=(1, 24, 3, 4, 6), audio=(1, 32, 2, 5))
+        video = torch.arange(24 * 3 * 4 * 6, dtype=torch.float32).reshape(shapes.video)
+        packed = shapes.pack(video, torch.zeros(shapes.audio))
+        frame = preview_frame(packed, shapes)
+        self.assertEqual(tuple(frame.shape), (1, 24, 4, 6))
+        self.assertTrue(torch.equal(frame, video[:, :, 1]))
+        # any other latent, or no generation, is left for Forge as it is
+        other = torch.zeros(1, 4, 8, 8)
+        self.assertIs(preview_frame(other, shapes), other)
+        self.assertIs(preview_frame(packed, None), packed)
+
     def test_text_token_tags_mark_the_vision_blocks(self):
         from forge_h3.native.streams import text_token_tags
         self.assertIsNone(text_token_tags(7, []))

@@ -74,12 +74,25 @@ class HeaderTests(unittest.TestCase):
         with self.assertRaisesRegex(H3Error, "More than one"):
             resolve_components(dit, [a, b])
 
-    def test_fast_model_is_not_treated_as_standard_fl2va(self):
+    def test_fast_model_is_recognized_and_accepted(self):
         path = checkpoint(self.root / "model.safetensors", DIT, {"modelspec.architecture": "FastH3"})
         self.assertEqual(inspect_model(path).variant, "fast")
-        te = checkpoint(self.root / "encoder.safetensors", TE)
-        with self.assertRaisesRegex(H3Error, "FastH3"):
-            resolve_components(path, [te])
+        modules = [checkpoint(self.root / f"{name}.safetensors", tensors)
+                   for name, tensors in (("encoder", TE), ("video", VIDEO_VAE), ("audio", AUDIO_VAE))]
+        self.assertEqual(resolve_components(path, modules).dit.variant, "fast")
+        # the ComfyUI repack keeps only {"format": "pt"}: the VSA gate identifies it
+        gated = checkpoint(self.root / "repack.safetensors", {**DIT, "blocks.0.attn.to_gate_compress.weight": ("I8", [7168, 5376])},
+                           {"format": "pt"})
+        self.assertEqual(inspect_model(gated).variant, "fast")
+
+    def test_ref2va_checkpoint_is_refused_by_name(self):
+        path = checkpoint(self.root / "minimax_h3_ref2va_pruned_int8_convrot.safetensors", DIT)
+        modules = [checkpoint(self.root / f"{name}.safetensors", tensors)
+                   for name, tensors in (("encoder", TE), ("video", VIDEO_VAE), ("audio", AUDIO_VAE))]
+        with self.assertRaisesRegex(H3Error, "Ref2VA"):
+            resolve_components(path, modules)
+        fl2va = checkpoint(self.root / "minimax_h3_fl2va_pruned_int8_convrot.safetensors", DIT)
+        self.assertEqual(resolve_components(fl2va, modules).dit.role, "dit")
 
     def test_nvfp4_text_encoder_is_rejected(self):
         dit = checkpoint(self.root / "model.safetensors", DIT)

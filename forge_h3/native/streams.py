@@ -46,6 +46,15 @@ def text_token_tags(text_len: int, spans) -> torch.Tensor | None:
     return tags
 
 
+def preview_frame(packed: torch.Tensor, shapes: StreamShapes | None) -> torch.Tensor:
+    """The middle video frame [1, 24, H/16, W/16] of a packed latent, for Forge's RGB live preview; anything that is
+    not the current generation's packed latent comes back unchanged."""
+    if shapes is None or packed.shape[-1] != shapes.video_size + math.prod(shapes.audio[1:]):
+        return packed
+    video, _ = shapes.unpack(packed[:1])
+    return video[:, :, video.shape[2] // 2]
+
+
 def stream_shapes(frames: int, width: int, height: int) -> StreamShapes:
     audio_t = round(frames / FPS * AUDIO_LATENTS_PER_SECOND)
     return StreamShapes(video=(1, 24, latent_frames(frames), height // SPATIAL, width // SPATIAL), audio=(1, 32, 2, audio_t))
