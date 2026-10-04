@@ -23,6 +23,8 @@ REQUIRED = {
     "backend.diffusion_engine.base": ("ForgeDiffusionEngine", "ForgeObjects"),
     "modules.processing": ("manage_model_and_prompt_cache", "need_global_unload"),
     "modules.sd_models": ("model_data",),
+    "modules.sd_vae_taesd": ("decoder_model", "download_model"),
+    "modules.paths_internal": ("models_path",),
     "huggingface_guess.detection": ("detect_unet_config",),
     "huggingface_guess.model_list": ("models", "BASE", "ModelType"),
     "huggingface_guess.latent": ("LatentFormat",),

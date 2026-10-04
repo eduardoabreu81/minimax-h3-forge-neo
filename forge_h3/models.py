@@ -142,8 +142,6 @@ def resolve_components(dit_path, module_paths):
     if "text_encoder" in resolved and resolved["text_encoder"].quantization == "nvfp4":
         # Forge Neo loads it without a warning, but the conditioning comes out wrong (a prompt for a bird gave a dog)
         raise H3Error("The NVFP4 AWQ text encoder does not encode prompts correctly in Forge Neo yet. Select qwen3vl_32b_minimax_h3_int8_convrot or the bf16 text encoder.")
-    if "video_vae" in resolved and resolved["video_vae"].variant == "quantized":
-        raise H3Error("The int8 H3 video VAE is not supported yet. Select minimax_h3_video_vae_fp16 or the original FL2VA video VAE.")
     for role in ("text_encoder", "video_vae", "audio_vae"):
         if role not in resolved:
             raise H3Error(f"Select the H3 {ROLE_LABELS[role]} in Forge's VAE / Text Encoder field.")

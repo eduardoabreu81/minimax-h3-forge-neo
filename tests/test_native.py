@@ -107,10 +107,15 @@ class ConversionTests(unittest.TestCase):
         self.assertTrue(torch.allclose(folded["x.weight"], conv.weight.detach(), atol=1e-6))
         self.assertEqual(sorted(folded), ["latents_mean", "latents_std", "x.bias", "x.weight"])
 
-    def test_quantized_video_vae_is_refused(self):
+    def test_quantized_video_vae_keeps_its_quantization(self):
         from forge_h3.native import vae
-        with self.assertRaisesRegex(ValueError, "int8"):
-            vae.convert_video_vae({"decoder.proj_out.comfy_quant": torch.zeros(1)})
+        sd = {"video.decoder.blocks.0.attn.to_qkv.comfy_quant": torch.zeros(1),
+              "video.decoder.blocks.0.attn.to_qkv.weight_scale": torch.ones(1)}
+        self.assertTrue(vae.is_quantized(sd, "video."))
+        self.assertFalse(vae.is_quantized(sd, "audio."))
+        converted = vae.convert_video_vae({"decoder.proj_out.comfy_quant": torch.zeros(1)})
+        self.assertIn("decoder.proj_out.comfy_quant", converted)
+        self.assertEqual(sorted(converted)[-2:], ["latents_mean", "latents_std"])
 
 
 def tiny_dit(curve):
@@ -180,6 +185,23 @@ class ForwardTests(unittest.TestCase):
         other = torch.zeros(1, 4, 8, 8)
         self.assertIs(preview_frame(other, shapes), other)
         self.assertIs(preview_frame(packed, None), packed)
+
+    def test_taeh3_layout_and_preview(self):
+        from forge_h3.native import taeh3
+        from forge_h3.native.streams import StreamShapes
+        decoder = taeh3.decoder()
+        sd = decoder.state_dict()
+        # the published file: 81 float tensors, 24 latent channels in, 3 out, a 1x1 skip where 96 becomes 64
+        self.assertEqual(len(sd), 81)
+        self.assertEqual(tuple(sd["1.weight"].shape), (96, 24, 3, 3))
+        self.assertEqual(tuple(sd["13.skip.weight"].shape), (64, 96, 1, 1))
+        self.assertEqual(tuple(sd["23.weight"].shape), (3, 64, 3, 3))
+        shapes = StreamShapes(video=(1, 24, 3, 4, 6), audio=(1, 32, 2, 5))
+        preview = taeh3.PreviewDecoder(lambda: shapes)
+        packed = shapes.pack(torch.randn(shapes.video), torch.zeros(shapes.audio))
+        image = preview(packed)
+        self.assertEqual(tuple(image.shape), (1, 3, 64, 96))
+        self.assertTrue(float(image.min()) >= 0.0 and float(image.max()) <= 1.0)
 
     def test_text_token_tags_mark_the_vision_blocks(self):
         from forge_h3.native.streams import text_token_tags

@@ -102,14 +102,13 @@ class HeaderTests(unittest.TestCase):
         with self.assertRaisesRegex(H3Error, "NVFP4"):
             resolve_components(dit, [te, vae, audio])
 
-    def test_int8_video_vae_is_rejected_before_loading(self):
+    def test_int8_video_vae_is_accepted(self):
         dit = checkpoint(self.root / "model.safetensors", DIT)
         te = checkpoint(self.root / "encoder.safetensors", TE)
         quantized = dict(VIDEO_VAE, **{"decoder.transformer_blocks.0.attn.to_qkv.comfy_quant": ("U8", [72])})
         vae = checkpoint(self.root / "video.safetensors", quantized)
         audio = checkpoint(self.root / "audio.safetensors", AUDIO_VAE)
-        with self.assertRaisesRegex(H3Error, "int8 H3 video VAE"):
-            resolve_components(dit, [te, vae, audio])
+        self.assertEqual(resolve_components(dit, [te, vae, audio]).video_vae.variant, "quantized")
 
     def test_complete_selection_resolves(self):
         paths = [checkpoint(self.root / f"{n}.safetensors", t) for n, t in (("te", TE), ("v", VIDEO_VAE), ("a", AUDIO_VAE))]

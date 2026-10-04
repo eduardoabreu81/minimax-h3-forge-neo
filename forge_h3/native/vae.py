@@ -4,8 +4,9 @@ Both VAEs are selected under VAE / Text Encoder. The loader files them under one
 under "video." and the audio one under "audio."; the engine then gives each its own Forge VAE, since the audio VAE
 only runs in fp32.
 
-Accepted files: the Comfy-Org single files (video fp16, audio fp32) and the original MiniMax FL2VA files, which lack
-the latent statistics buffers and keep the audio convolutions weight-normalized.
+Accepted files: the Comfy-Org single files (video fp16, audio fp32), Kijai's int8 ConvRot video VAE (its decoder
+transformer linears are quantized; Forge's mixed-precision operations load them) and the original MiniMax FL2VA files,
+which lack the latent statistics buffers and keep the audio convolutions weight-normalized.
 """
 
 from types import SimpleNamespace
@@ -22,8 +23,6 @@ QUANT_SUFFIXES = (".comfy_quant", ".weight_scale")
 
 MISSING_VAE = ("MiniMax H3 needs both of its autoencoders: select the H3 video VAE and the H3 audio VAE under "
                "VAE / Text Encoder")
-QUANTIZED_VIDEO_VAE = ("The int8 H3 video VAE is not supported yet: select minimax_h3_video_vae_fp16 or the original "
-                       "FL2VA video VAE")
 
 
 def is_video_vae(sd) -> bool:
@@ -34,9 +33,11 @@ def is_audio_vae(sd) -> bool:
     return AUDIO_KEY in sd
 
 
+def is_quantized(sd: dict, prefix: str = "") -> bool:
+    return any(k.startswith(prefix) and k.endswith(QUANT_SUFFIXES) for k in sd)
+
+
 def convert_video_vae(sd: dict) -> dict:
-    if any(k.endswith(QUANT_SUFFIXES) for k in sd):
-        raise ValueError(QUANTIZED_VIDEO_VAE)
     sd = dict(sd)
     sd.setdefault("latents_mean", torch.tensor(LATENTS_MEAN))
     sd.setdefault("latents_std", torch.tensor(LATENTS_STD))
@@ -63,9 +64,9 @@ def convert_audio_vae(sd: dict) -> dict:
 class AutoencoderMiniMaxH3(nn.Module):
     """Holds the video and audio VAEs; the state dict uses the "video." and "audio." prefixes."""
 
-    def __init__(self, video_layers=36):
+    def __init__(self, video_layers=36, video=None):
         super().__init__()
-        self.video = MiniMaxH3VideoVAE(num_layers=video_layers)
+        self.video = video if video is not None else MiniMaxH3VideoVAE(num_layers=video_layers)
         self.audio = MiniMaxH3AudioVAE()
         # read by Forge's VAE patcher: z_dim for the 3D (video) path, latent_channels for the audio one
         self.video.config = SimpleNamespace(z_dim=24)
