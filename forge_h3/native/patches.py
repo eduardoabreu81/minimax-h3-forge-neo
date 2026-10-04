@@ -18,7 +18,7 @@ from backend.state_dict import load_state_dict
 from huggingface_guess import detection, model_list
 from transformers.modeling_utils import no_init_weights
 
-from . import model, vae
+from . import model, release, vae
 from .engine import MiniMaxH3Engine
 from .text_encoder import Qwen3VL32B
 from .transformer import MiniMaxH3Model
@@ -180,6 +180,35 @@ def _hook_conditions() -> None:
     condition.ConditionCrossAttn.can_concat = can_concat
 
 
+def _hook_unload() -> None:
+    # see release.py: a replaced H3 model is emptied before Forge detaches it to system RAM
+    original = memory_management.unload_all_models
+    types = release.h3_module_types()
+
+    def unload_all_models(*args, **kwargs):
+        try:
+            from modules import sd_models
+            if release.release_replaced(memory_management.current_loaded_models, sd_models.model_data.sd_model, types):
+                print("[MiniMax H3] released the replaced H3 model without copying it to system RAM")
+        except Exception as e:
+            logger.warning(f"[MiniMax H3] could not release the replaced H3 model early: {e}")
+        return original(*args, **kwargs)
+
+    memory_management.unload_all_models = unload_all_models
+
+    from modules import processing, sd_models
+    original_manage = processing.manage_model_and_prompt_cache
+
+    def manage_model_and_prompt_cache(p):
+        if release.reload_instead_of_unload(processing.need_global_unload, sd_models.model_data.sd_model):
+            # an emptied hash makes forge_model_reload discard H3 (see above) and load it again from disk
+            print("[MiniMax H3] settings changed: reloading H3 from disk instead of moving it to system RAM")
+            sd_models.model_data.forge_hash = ""
+        return original_manage(p)
+
+    processing.manage_model_and_prompt_cache = manage_model_and_prompt_cache
+
+
 def apply() -> None:
     global _applied
     if _applied:
@@ -193,6 +222,7 @@ def apply() -> None:
     _hook_replace_state_dict()
     _hook_components()
     _hook_conditions()
+    _hook_unload()
 
     try:
         from . import presets

@@ -7,7 +7,8 @@ import inspect
 # what the backend imports or patches, by module; an older Forge Neo misses some of these
 REQUIRED = {
     "backend.attention": ("attention_function", "attention_pytorch"),
-    "backend.memory_management": ("cast_to", "get_free_memory", "load_model_gpu", "should_use_fp16"),
+    "backend.memory_management": ("cast_to", "get_free_memory", "load_model_gpu", "should_use_fp16", "unload_all_models",
+                                  "current_loaded_models"),
     "backend.operations": ("main_stream_worker", "weights_manual_cast", "using_forge_operations"),
     "backend.quant_ops": ("ck", "QUANT_ALGOS"),
     "backend.state_dict": ("load_state_dict",),
@@ -20,6 +21,8 @@ REQUIRED = {
     "backend.text_processing.emphasis": ("EmphasisNone", "uses_emphasis"),
     "backend.patcher.vae": ("VAE",),
     "backend.diffusion_engine.base": ("ForgeDiffusionEngine", "ForgeObjects"),
+    "modules.processing": ("manage_model_and_prompt_cache", "need_global_unload"),
+    "modules.sd_models": ("model_data",),
     "huggingface_guess.detection": ("detect_unet_config",),
     "huggingface_guess.model_list": ("models", "BASE", "ModelType"),
     "huggingface_guess.latent": ("LatentFormat",),
