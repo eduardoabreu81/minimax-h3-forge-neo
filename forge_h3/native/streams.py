@@ -68,6 +68,9 @@ class Generation:
     audio_scale: float
     # FL2VA keyframes: {"resolved_frame_index": pixel frame, "latent": [1, 24, 1, H/16, W/16]}, first frame first
     keyframes: list = field(default_factory=list)
+    # Ref2VA reference pictures: {"kind": "image", "latent_h", "latent_w", "latent": [1, 24, 1, h, w]}, each at its own
+    # size, in "<Picture i>" order
+    refs: list = field(default_factory=list)
     # vision block token ranges of the prompt, which the DiT tags as video modality
     vision_spans: list = field(default_factory=list)
     # H3's sparse attention for this request (native/sparse.py), when Sparse Attention Integrated is on

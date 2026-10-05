@@ -14,6 +14,9 @@ STILL_FRAMES = MIN_FRAMES
 AUDIO_SHIFT = 3.0
 MIN_AUDIO_SHIFT = 0.01
 MAX_AUDIO_SHIFT = 100.0
+# FL2VA (text, first and last frame) and Ref2VA (reference pictures) checkpoints
+MODES = ("fl2va", "ref2va")
+MAX_REFERENCES = 9
 
 
 class H3Error(RuntimeError):
@@ -56,7 +59,7 @@ def integer(value, label):
 
 @dataclass
 class GenerationRequest:
-    """What H3 adds to Forge's own generation settings: length, output kind and audio."""
+    """What H3 adds to Forge's own generation settings: length, output kind, audio and conditioning pictures."""
     width: int = 832
     height: int = 480
     frames: int = DEFAULT_FRAMES
@@ -65,10 +68,22 @@ class GenerationRequest:
     first_frame: bool = False
     last_frame: bool = False
     audio_shift: float = AUDIO_SHIFT
+    mode: str = "fl2va"
+    references: int = 0
 
     def __post_init__(self):
         if self.output not in ("Video", "Still image"):
             raise H3Error("H3 output must be Video or Still image.")
+        if self.mode not in MODES:
+            raise H3Error(f"Unknown H3 mode {self.mode!r}.")
+        if self.mode == "ref2va" and self.keyframes:
+            raise H3Error("A Ref2VA checkpoint takes reference pictures, not a first or last frame. Select an FL2VA "
+                          "checkpoint for those.")
+        if self.mode == "fl2va" and self.references:
+            raise H3Error("Reference pictures need a Ref2VA checkpoint.")
+        self.references = integer(self.references, "References")
+        if not 0 <= self.references <= MAX_REFERENCES:
+            raise H3Error(f"H3 Ref2VA takes up to {MAX_REFERENCES} reference pictures.")
         if self.output == "Still image" and self.keyframes:
             raise H3Error("H3 Still image does not take a first or last frame yet. Choose Video, or turn off "
                           "ImageStitch Integrated.")

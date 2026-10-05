@@ -173,12 +173,16 @@ class MiniMaxH3Model(nn.Module):
                                "check the console for an earlier MiniMax H3 message")
         shapes = generation.shapes
         text_len = context.shape[1]
-        # as ComfyUI's model_base.MiniMaxH3.extra_conds: the keyframe latents ride as condition rows, never denoised
+        # as ComfyUI's model_base.MiniMaxH3.extra_conds: the keyframe and reference latents ride as condition rows,
+        # never denoised, keyframes first
         payload = {"audio_scale": generation.audio_scale, "seed": generation.seed,
-                   "layout": self._layout(text_len, shapes, generation.keyframes)}
+                   "layout": self._layout(text_len, shapes, generation.keyframes, generation.refs)}
         if generation.keyframes:
             payload["keyframes"] = generation.keyframes
             payload["cond_video_latents"] = [kf["latent"] for kf in generation.keyframes]
+        if generation.refs:
+            payload["refs"] = generation.refs
+            payload["cond_video_latents"] = payload.get("cond_video_latents", []) + [r["latent"] for r in generation.refs]
         tags = text_token_tags(text_len, generation.vision_spans)
         if tags is not None:
             payload["text_token_tags"] = tags
@@ -196,15 +200,17 @@ class MiniMaxH3Model(nn.Module):
                 outputs.append(shapes.pack(v, a))
         return torch.cat(outputs)
 
-    def _layout(self, text_len, shapes, keyframes=()):
-        # one layout per text length (prompt and negative prompt differ), rebuilt when the shapes or keyframes change
+    def _layout(self, text_len, shapes, keyframes=(), refs=()):
+        # one layout per text length (prompt and negative prompt differ), rebuilt when the shapes, keyframes or
+        # references change
         _, _, latent_t, lat_h, lat_w = shapes.video
         signature = (text_len, latent_t, lat_h + lat_h % 2, lat_w + lat_w % 2, shapes.audio[-1])
-        key = signature + tuple((kf["resolved_frame_index"], tuple(kf["latent"].shape)) for kf in keyframes)
+        key = (signature + tuple((kf["resolved_frame_index"], tuple(kf["latent"].shape)) for kf in keyframes)
+               + tuple((r["kind"], tuple(r["latent"].shape)) for r in refs))
         if key not in self._layouts:
             if len(self._layouts) >= LAYOUT_CACHE_SIZE:
                 self._layouts.clear()
-            self._layouts[key] = PackedLayout(*signature, keyframes=list(keyframes) or None)
+            self._layouts[key] = PackedLayout(*signature, keyframes=list(keyframes) or None, refs=list(refs) or None)
         return self._layouts[key]
 
     def forward_streams(self, x, timestep, context, transformer_options={}, minimax_payload=None,

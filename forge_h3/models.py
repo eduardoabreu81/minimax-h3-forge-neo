@@ -272,6 +272,11 @@ class Components:
     def models(self):
         return (self.dit, self.text_encoder, self.video_vae, self.audio_vae)
 
+    @property
+    def mode(self):
+        # Ref2VA and FL2VA files have the same tensors and no metadata: the name is the only hint
+        return "ref2va" if "ref2va" in self.dit.path.name.lower() else "fl2va"
+
 
 def resolve_components(dit_path, module_paths):
     """The H3 checkpoint and the three modules selected under VAE / Text Encoder, checked before Forge loads them."""
@@ -286,10 +291,6 @@ def resolve_components(dit_path, module_paths):
         if item.role in resolved:
             raise H3Error(f"More than one H3 {ROLE_LABELS[item.role]} is selected.")
         resolved[item.role] = item
-    if "ref2va" in dit.path.name.lower():
-        # Ref2VA and FL2VA files have the same tensors and no metadata: the name is the only hint
-        raise H3Error("Ref2VA checkpoints (reference-to-video) are not supported yet. Select an FL2VA checkpoint, "
-                      "such as minimax_h3_fl2va_pruned_int8_convrot.")
     if "text_encoder" in resolved and resolved["text_encoder"].quantization == "nvfp4":
         # Forge Neo loads it without a warning, but the conditioning comes out wrong (a prompt for a bird gave a dog)
         raise H3Error("The NVFP4 AWQ text encoder does not encode prompts correctly in Forge Neo yet. Select qwen3vl_32b_minimax_h3_int8_convrot or the bf16 text encoder.")

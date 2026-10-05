@@ -8,7 +8,7 @@ import json
 import uuid
 from pathlib import Path
 
-from . import keyframes
+from . import keyframes, references
 from .contracts import AUDIO_SHIFT, FPS, GenerationRequest, H3Error, set_pending_error
 from .media import export_video, find_ffmpeg
 from .models import inspect_model, resolve_components
@@ -74,43 +74,56 @@ def before_process(p, output, include_audio, audio_shift=AUDIO_SHIFT):
         raise
 
 
-def validate_img2img(p):
+def validate_img2img(p, mode="fl2va"):
     if not getattr(p, "init_images", None):
-        raise H3Error("Add an input image for H3 image-to-video: it becomes the first frame.")
+        role = "<Picture 1>, the first reference" if mode == "ref2va" else "the first frame"
+        raise H3Error(f"Add an input image for H3 in img2img: it becomes {role}.")
     if getattr(p, "resize_mode", 0) == LATENT_UPSCALE:
         raise H3Error("H3 does not take the latent upscale resize mode. Choose another Resize mode.")
 
 
 def _before_process(p, output, include_audio, audio_shift):
     p.h3_last_frame = None
+    p.h3_references = []
     info = select_h3(p)
     if info is None:
         return
     from modules import processing, shared
     is_img2img = isinstance(p, processing.StableDiffusionProcessingImg2Img)
     validate_processing(p)
-    if is_img2img:
-        validate_img2img(p)
     overrides = getattr(p, "override_settings", {})
     components = resolve_components(info.filename, module_paths(overrides.get("forge_additional_modules", shared.opts.forge_additional_modules)))
+    mode = components.mode
+    if is_img2img:
+        validate_img2img(p, mode)
     p.h3_fast = components.dit.variant == "fast"
     if p.h3_fast:
         # its recipe: 8 steps, video shift 10 (audio 3), and the VSA sparse attention it was trained with
         print("[MiniMax H3] FastH3 checkpoint: use 8 steps and Shift 10; turn on Sparse Attention Integrated for its VSA attention")
-    last = keyframes.last_frame(p, p.width, p.height)
+    last, refs = None, []
+    if mode == "ref2va":
+        # the original pictures (img2img input first), each scaled to the clip's area on its own
+        refs = [references.prepare(image, p.width, p.height) for image in references.collect(p, is_img2img)]
+    else:
+        last = keyframes.last_frame(p, p.width, p.height)
     request = GenerationRequest(width=p.width, height=p.height, frames=p.batch_size, output=output, include_audio=include_audio,
-                                first_frame=is_img2img, last_frame=last is not None, audio_shift=audio_shift)
+                                first_frame=is_img2img and mode == "fl2va", last_frame=last is not None,
+                                audio_shift=audio_shift, mode=mode, references=len(refs))
     if request.output == "Video":
         find_ffmpeg(getattr(shared.opts, "h3_ffmpeg_path", ""))
     p.h3_request = request
     p.h3_last_frame = last
+    p.h3_references = refs
     p.batch_size = 1
     if is_img2img:
-        # H3 generates the whole clip from noise; the input image conditions it as the first frame
+        # H3 generates the whole clip from noise; the input image conditions it as the first frame or <Picture 1>
         p.denoising_strength = 1.0
     audio = "with audio" if request.include_audio else "without audio"
     frames = " and ".join(name for name, used in (("first", request.first_frame), ("last", request.last_frame)) if used)
     conditioning = f", {frames} frame" if frames else ""
+    if request.mode == "ref2va":
+        count = request.references
+        conditioning = f", Ref2VA with {count} reference picture{'s' if count != 1 else ''}"
     print(f"[MiniMax H3] {request.output.lower()}: {request.frames} frames at {request.width}x{request.height}, {audio}{conditioning}")
 
 
@@ -124,12 +137,18 @@ def process(p):
 
     engine = p.sd_model
     last = getattr(p, "h3_last_frame", None)
-    # Forge caches the conditioning by prompt, which knows nothing of the keyframes
-    if request.keyframes or engine.keyframe_images():
+    refs = getattr(p, "h3_references", [])
+    # Forge caches the conditioning by prompt, which knows nothing of the pictures shown before it
+    if request.keyframes or refs or engine.condition_images():
         p.clear_prompt_cache()
-    engine.set_keyframes(keyframes.to_tensor(last) if last is not None else None)
+    if request.mode == "ref2va":
+        engine.set_references(refs)
+    else:
+        engine.set_keyframes(keyframes.to_tensor(last) if last is not None else None)
     engine.set_audio_shift(request.audio_shift)
     p.extra_generation_params.update({"H3 Variant": "FastH3"} if getattr(p, "h3_fast", False) else {})
+    p.extra_generation_params.update({"H3 Mode": "Ref2VA"} if request.mode == "ref2va" else {})
+    p.extra_generation_params.update({"H3 References": request.references} if request.references else {})
     p.extra_generation_params.update({"H3 First frame": True} if request.first_frame else {})
     p.extra_generation_params.update({"H3 Last frame": True} if request.last_frame else {})
 
@@ -166,7 +185,7 @@ def before_sampling(p, noise):
     p.rng = rng.ImageRNG(shape, p.seeds, subseeds=p.subseeds, subseed_strength=p.subseed_strength,
                          seed_resize_from_h=p.seed_resize_from_h, seed_resize_from_w=p.seed_resize_from_w)
     p.modified_noise = p.rng.next().to(device=noise.device, dtype=noise.dtype)
-    if request.first_frame:
+    if getattr(p, "init_latent", None) is not None:
         # img2img samples from init_latent at full denoise; the packed start is pure noise
         p.init_latent = torch.zeros_like(p.modified_noise)
     patches.begin_sampling()
@@ -182,7 +201,7 @@ def _set_sparse_attention(p):
     vsa = getattr(p, "h3_fast", False)
     predictor = p.sd_model.forge_objects.unet.model.predictor
     p.sd_model.generation.sparse = sparse.from_settings(settings, predictor.percent_to_sigma, vsa=vsa)
-    mode = "VSA, as FastH3 was trained" if vsa else "text, keyframe and audio rows exact"
+    mode = "VSA, as FastH3 was trained" if vsa else "text, picture and audio rows exact"
     print(f"[MiniMax H3] Sparse Attention Integrated: H3 sparse attention ({mode})")
 
 
@@ -230,7 +249,8 @@ def _write_video(p, processed, request, generation):
     sidecar = dict(prompt=p.prompt, negative_prompt=p.negative_prompt, seed=generation.seed, width=request.width,
                    height=request.height, frames=request.frames, fps=FPS, steps=p.steps, sampler=p.sampler_name,
                    scheduler=p.scheduler, cfg=p.cfg_scale, include_audio=audio is not None,
-                   first_frame=request.first_frame, last_frame=request.last_frame, infotext=infotext)
+                   first_frame=request.first_frame, last_frame=request.last_frame, mode=request.mode,
+                   references=request.references, infotext=infotext)
     Path(output).with_suffix(".json").write_text(json.dumps(sidecar, indent=2), encoding="utf-8")
     processed.video_path = output
     processed.comments += f"H3 video saved to {output}\n"

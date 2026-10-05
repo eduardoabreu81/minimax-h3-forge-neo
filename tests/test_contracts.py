@@ -85,14 +85,15 @@ class HeaderTests(unittest.TestCase):
                            {"format": "pt"})
         self.assertEqual(inspect_model(gated).variant, "fast")
 
-    def test_ref2va_checkpoint_is_refused_by_name(self):
-        path = checkpoint(self.root / "minimax_h3_ref2va_pruned_int8_convrot.safetensors", DIT)
+    def test_ref2va_mode_comes_from_the_name(self):
+        # Ref2VA and FL2VA checkpoints have the same tensors: only the file name tells them apart
         modules = [checkpoint(self.root / f"{name}.safetensors", tensors)
                    for name, tensors in (("encoder", TE), ("video", VIDEO_VAE), ("audio", AUDIO_VAE))]
-        with self.assertRaisesRegex(H3Error, "Ref2VA"):
-            resolve_components(path, modules)
+        ref2va = checkpoint(self.root / "minimax_h3_ref2va_pruned_w4a8_mixed.safetensors", DIT)
         fl2va = checkpoint(self.root / "minimax_h3_fl2va_pruned_int8_convrot.safetensors", DIT)
-        self.assertEqual(resolve_components(fl2va, modules).dit.role, "dit")
+        renamed = checkpoint(self.root / "my-h3.safetensors", DIT)
+        self.assertEqual([resolve_components(path, modules).mode for path in (ref2va, fl2va, renamed)],
+                         ["ref2va", "fl2va", "fl2va"])
 
     def test_nvfp4_text_encoder_is_rejected(self):
         dit = checkpoint(self.root / "model.safetensors", DIT)
@@ -247,6 +248,50 @@ class RequestTests(unittest.TestCase):
             GenerationRequest(frames=125)
         with self.assertRaisesRegex(H3Error, "32"):
             GenerationRequest(width=833)
+
+    def test_modes_keep_their_own_pictures(self):
+        self.assertEqual(GenerationRequest(mode="ref2va", references=3).references, 3)
+        self.assertEqual(GenerationRequest(mode="ref2va").references, 0)  # a Ref2VA checkpoint also runs from text alone
+        with self.assertRaisesRegex(H3Error, "first or last frame"):
+            GenerationRequest(mode="ref2va", first_frame=True)
+        with self.assertRaisesRegex(H3Error, "Ref2VA checkpoint"):
+            GenerationRequest(references=1)
+        with self.assertRaisesRegex(H3Error, "up to 9"):
+            GenerationRequest(mode="ref2va", references=10)
+        with self.assertRaisesRegex(H3Error, "mode"):
+            GenerationRequest(mode="r2v")
+
+
+class ReferenceTests(unittest.TestCase):
+    def test_pictures_are_scaled_down_to_the_clip_area_never_up(self):
+        from forge_h3.references import reference_size
+        self.assertEqual(reference_size(1920, 1080, 640, 384), (672, 384))   # Full HD for a 640x384 clip
+        self.assertEqual(reference_size(1080, 1920, 640, 384), (384, 672))   # aspect kept, portrait stays portrait
+        self.assertEqual(reference_size(300, 200, 640, 384), (288, 192))     # small pictures are not enlarged
+        self.assertEqual(reference_size(20, 4000, 640, 384), (32, 4000))     # sides never go below 32
+
+    def test_img2img_input_is_picture_one_then_the_gallery(self):
+        from unittest import mock
+
+        from PIL import Image
+
+        from forge_h3 import references
+        first, gallery = Image.new("RGB", (64, 64), "red"), [Image.new("RGB", (64, 64), c) for c in ("green", "blue")]
+        p = type("P", (), {"init_images": [first]})()
+        with mock.patch("forge_h3.keyframes.stitch_gallery", return_value=gallery):
+            self.assertEqual(references.collect(p, is_img2img=True), [first, *gallery])
+            self.assertEqual(references.collect(p, is_img2img=False), gallery)
+        with mock.patch("forge_h3.keyframes.stitch_gallery", return_value=gallery * 5):
+            with self.assertRaisesRegex(H3Error, "<Picture 1>"):
+                references.collect(p, is_img2img=True)
+
+    def test_prepared_picture_is_rgb_in_zero_one(self):
+        from PIL import Image
+
+        from forge_h3.references import prepare
+        tensor = prepare(Image.new("RGBA", (1920, 1080), (255, 0, 0, 128)), 640, 384)
+        self.assertEqual(tuple(tensor.shape), (1, 384, 672, 3))
+        self.assertEqual(tensor[0, 0, 0].tolist(), [1.0, 0.0, 0.0])
 
 
 if __name__ == "__main__":

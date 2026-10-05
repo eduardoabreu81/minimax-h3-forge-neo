@@ -235,6 +235,37 @@ class ForwardTests(unittest.TestCase):
             self.assertFalse(torch.allclose(packed, plain, atol=1e-4))
             self.assertIsNot(model._layout(7, shapes, keyframes[:1]), layout)
 
+    def test_packed_forward_with_references_matches_the_stream_forward(self):
+        from forge_h3.native.layout import PackedLayout
+        from forge_h3.native.streams import Generation, StreamShapes, text_token_tags
+        with torch.inference_mode():
+            model = tiny_dit(17)
+            shapes = StreamShapes(video=(1, 24, 2, 6, 10), audio=(1, 32, 2, 9))
+            # Ref2VA pictures keep their own size: a portrait and a landscape reference for a landscape clip
+            refs = [{"kind": "image", "latent_h": 8, "latent_w": 4, "latent": torch.randn(1, 24, 1, 8, 4)},
+                    {"kind": "image", "latent_h": 6, "latent_w": 10, "latent": torch.randn(1, 24, 1, 6, 10)}]
+            spans = [(0, 3), (4, 6)]
+            video, audio, context = torch.randn(shapes.video), torch.randn(shapes.audio), torch.randn(1, 9, 48)
+            t = torch.tensor([700.0])
+            model.generation = Generation(shapes=shapes, seed=1, audio_scale=4.0, refs=refs, vision_spans=spans)
+            packed = model(shapes.pack(video, audio), t, context)
+            layout = model._layout(9, shapes, refs=refs)
+            self.assertEqual([k for _, _, k in layout.segments], ["text", "ref_img", "ref_img", "audio", "video"])
+            # each picture packs on its own grid, one time step apart, and the targets start after them
+            (a1, b1, _), (a2, b2, _) = [s for s in layout.segments if s[2] == "ref_img"]
+            self.assertEqual((b1 - a1, b2 - a2), (8 * 4 // 4, 6 * 10 // 4))
+            self.assertEqual(layout.position_ids[a1, 0].item(), 9.0)
+            self.assertEqual(layout.position_ids[a2, 0].item(), 10.0)
+            payload = {"audio_scale": 4.0, "seed": 1, "refs": refs, "cond_video_latents": [r["latent"] for r in refs],
+                       "text_token_tags": text_token_tags(9, spans), "layout": PackedLayout(9, 2, 6, 10, 9, refs=refs)}
+            v, a = model.forward_streams([video, audio], t, context, minimax_payload=payload)
+            self.assertTrue(torch.allclose(packed, shapes.pack(v, a), atol=1e-5))
+            # the references change the prediction, and other references get their own layout
+            model.generation = Generation(shapes=shapes, seed=1, audio_scale=4.0)
+            plain = model(shapes.pack(video, audio), t, context)
+            self.assertFalse(torch.allclose(packed, plain, atol=1e-4))
+            self.assertIsNot(model._layout(9, shapes, refs=refs[:1]), layout)
+
     def test_masked_rows_run(self):
         with torch.inference_mode():
             model = tiny_dit(None)

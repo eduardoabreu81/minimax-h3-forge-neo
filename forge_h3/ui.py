@@ -46,11 +46,14 @@ class Panel:
             self.audio_shift = gr.Slider(minimum=1.0, maximum=20.0, step=0.5, value=AUDIO_SHIFT, label="Audio shift",
                                          elem_id=f"{self.tab}_h3_audio_shift")
             if is_img2img:
-                gr.Markdown("The input image is the **first frame**; Denoising strength is not used. For a **last frame** "
-                            "too, add one image to the **ImageStitch Integrated** gallery.")
+                gr.Markdown("With an FL2VA checkpoint the input image is the **first frame**; for a **last frame** too, add "
+                            "one image to the **ImageStitch Integrated** gallery. With a **Ref2VA** checkpoint the input "
+                            "image is `<Picture 1>` and the gallery holds the next reference pictures, up to 9 in all. "
+                            "Denoising strength is not used.")
             else:
-                gr.Markdown("For a **last frame**, add one image to the **ImageStitch Integrated** gallery. "
-                            "For a first frame, use img2img.")
+                gr.Markdown("With an FL2VA checkpoint, one image in the **ImageStitch Integrated** gallery is the **last "
+                            "frame** (img2img gives the first). With a **Ref2VA** checkpoint the gallery holds up to 9 "
+                            "reference pictures, `<Picture 1>`, `<Picture 2>`... in order.")
             self.status = gr.Markdown("Select the H3 text encoder, video VAE and audio VAE in VAE / Text Encoder.")
             with gr.Accordion("Components", open=False):
                 self.summary = gr.Markdown("")
@@ -132,7 +135,10 @@ class Panel:
                     from .integration import module_paths
                     from .models import resolve_components
                     components = resolve_components(info.filename, module_paths(module_values))
-                    summary = "  \n".join(f"**{ROLE_LABELS[m.role].title()}:** {html.escape(m.path.name)} ({m.quantization})" for m in components.models)
+                    mode = ("**Mode:** Ref2VA, reference pictures" if components.mode == "ref2va"
+                            else "**Mode:** FL2VA, first and last frame")
+                    summary = "  \n".join([mode] + [f"**{ROLE_LABELS[m.role].title()}:** {html.escape(m.path.name)} ({m.quantization})"
+                                                    for m in components.models])
                     error = ""
                 except H3Error as exc:
                     error = str(exc)

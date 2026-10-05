@@ -37,7 +37,7 @@ class Script:
 
 
 class Txt2Img:
-    def __init__(self, gallery=None):
+    def __init__(self, gallery=None, references=None):
         self.prompt, self.negative_prompt = "a bird takes off", ""
         self.n_iter, self.batch_size = 1, FRAMES
         self.width, self.height = WIDTH, HEIGHT
@@ -49,14 +49,15 @@ class Txt2Img:
         self.extra_generation_params, self.override_settings = {}, {}
         self.clear_prompt_cache = Mock()
         # Script: None, then the H3 panel (Output, audio), then ImageStitch (enable, gallery, maximum side)
-        self.script_args = [0, "Video", True, gallery is not None, [(gallery, None)] if gallery else None, 1024]
+        images = references if references is not None else ([gallery] if gallery else [])
+        self.script_args = [0, "Video", True, bool(images), [(image, None) for image in images] or None, 1024]
         self.scripts = types.SimpleNamespace(alwayson_scripts=[Script("MiniMax H3", 1, 3),
                                                                Script(keyframes.IMAGE_STITCH, 3, 6)])
 
 
 class Img2Img(Txt2Img):
-    def __init__(self, gallery=None, init=True):
-        super().__init__(gallery)
+    def __init__(self, gallery=None, init=True, references=None):
+        super().__init__(gallery, references)
         self.init_images = [Image.new("RGB", (50, 50), "red")] if init else []
         self.resize_mode, self.denoising_strength = 0, 0.75
 
@@ -106,7 +107,7 @@ class FlowTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
+        root = self.root = Path(tmp.name)
         files = [checkpoint(root / f"{name}.safetensors", tensors) for name, tensors in
                  (("model", DIT), ("encoder", TE), ("video", VIDEO_VAE), ("audio", AUDIO_VAE))]
         stubs = {**forge_stubs.engine_modules(), **forge_modules(root, files)}
@@ -139,7 +140,13 @@ class FlowTests(unittest.TestCase):
         engine.text_processing_engine_h3 = FakeTextEngine()
         engine.is_h3, engine.video_shift, engine.generation = True, 12.0, None
         engine.first_frame = engine.last_frame = None
+        engine.mode, engine.references = "fl2va", []
         return engine
+
+    def use_ref2va(self):
+        """Select a Ref2VA checkpoint: the same tensors as FL2VA, told apart by the name."""
+        path = checkpoint(self.root / "minimax_h3_ref2va_pruned_w4a8_mixed.safetensors", DIT)
+        sys.modules["modules.sd_models"].get_closet_checkpoint_match = lambda value: types.SimpleNamespace(filename=str(path))
 
     def run_until_sampling(self, p, encode=True, audio_shift=3.0):
         """before_process .. process_before_every_sampling, as Forge calls them; returns the conditioning."""
@@ -247,6 +254,62 @@ class FlowTests(unittest.TestCase):
         dit = self.engine.forge_objects.unet.model.diffusion_model
         with self.assertRaisesRegex(H3Error, "did not reach H3"):
             dit(torch.zeros(1, 1, 1, 8), torch.tensor([900.0]), torch.zeros(1, 7, 48))
+
+    def test_ref2va_gallery_pictures_are_references_at_their_own_size(self):
+        self.use_ref2va()
+        p = Txt2Img(references=[Image.new("RGB", (300, 100), "blue"), Image.new("RGB", (40, 80), "green")])
+        cond = self.run_until_sampling(p)
+        self.assertEqual((p.h3_request.mode, p.h3_request.references), ("ref2va", 2))
+        self.assertFalse(p.h3_request.keyframes)
+        self.assertEqual((p.extra_generation_params["H3 Mode"], p.extra_generation_params["H3 References"]), ("Ref2VA", 2))
+        p.clear_prompt_cache.assert_called()
+        # <Picture 1>, <Picture 2> in gallery order, each scaled to the 96x64 clip area at most, sides rounded to 32
+        images = self.engine.text_processing_engine_h3.images
+        self.assertEqual([tuple(i.shape) for i in images], [(1, 32, 128, 3), (1, 64, 32, 3)])
+        generation = self.engine.generation
+        self.assertEqual(generation.keyframes, [])
+        self.assertEqual([(r["kind"], r["latent_h"], r["latent_w"], tuple(r["latent"].shape)) for r in generation.refs],
+                         [("image", 2, 8, (1, 24, 1, 2, 8)), ("image", 4, 2, (1, 24, 1, 4, 2))])
+        self.assertFalse(hasattr(p, "init_latent"))
+        dit = self.engine.forge_objects.unet.model.diffusion_model
+        out = dit(p.modified_noise, torch.tensor([900.0]), cond[0].unsqueeze(0))
+        self.assertEqual(out.shape, p.modified_noise.shape)
+        self.assertTrue(torch.isfinite(out).all())
+
+    def test_ref2va_img2img_input_is_picture_one(self):
+        self.use_ref2va()
+        p = Img2Img(references=[Image.new("RGB", (64, 64), "green")])
+        cond = self.run_until_sampling(p)
+        self.assertEqual((p.h3_request.references, p.h3_request.first_frame), (2, False))
+        self.assertNotIn("H3 First frame", p.extra_generation_params)
+        # the original input picture (50x50 red), not Forge's resized copy, comes first; no first frame is kept
+        first, second = self.engine.text_processing_engine_h3.images
+        self.assertEqual(tuple(first.shape), (1, 64, 64, 3))
+        self.assertTrue(torch.allclose(first[0, 0, 0], torch.tensor([1.0, 0.0, 0.0])))
+        self.assertTrue(torch.allclose(second[0, 0, 0], torch.tensor([0.0, 128 / 255, 0.0]), atol=1e-6))
+        self.assertIsNone(self.engine.first_frame)
+        self.assertEqual(len(self.engine.generation.refs), 2)
+        # img2img still samples from a pure-noise packed start
+        self.assertEqual(float(p.init_latent.abs().sum()), 0.0)
+        self.assertEqual(p.init_latent.shape, p.modified_noise.shape)
+        dit = self.engine.forge_objects.unet.model.diffusion_model
+        self.assertTrue(torch.isfinite(dit(p.modified_noise, torch.tensor([900.0]), cond[0].unsqueeze(0))).all())
+
+    def test_ref2va_takes_up_to_nine_pictures(self):
+        self.use_ref2va()
+        with self.assertRaisesRegex(H3Error, "up to 9"):
+            integration.before_process(Img2Img(references=[Image.new("RGB", (32, 32))] * 9), "Video", True)
+
+    def test_fl2va_after_ref2va_drops_the_references(self):
+        self.use_ref2va()
+        self.run_until_sampling(Txt2Img(references=[Image.new("RGB", (64, 64), "green")]))
+        sys.modules["modules.sd_models"].get_closet_checkpoint_match = lambda value: types.SimpleNamespace(
+            filename=str(self.root / "model.safetensors"))
+        p = Txt2Img()
+        self.run_until_sampling(p)
+        p.clear_prompt_cache.assert_called()
+        self.assertEqual((self.engine.mode, self.engine.references, self.engine.generation.refs), ("fl2va", [], []))
+        self.assertEqual(self.engine.text_processing_engine_h3.images, [])
 
     def test_latent_upscale_resize_is_refused(self):
         p = Img2Img()
