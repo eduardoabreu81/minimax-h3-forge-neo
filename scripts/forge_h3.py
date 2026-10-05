@@ -46,7 +46,7 @@ class Script(scripts.Script):
         return self.panel.inputs
 
     def before_process(self, p, output="Video", include_audio=True, audio_shift=3.0, *args):
-        integration.before_process(p, output, include_audio, audio_shift)
+        integration.script_before_process(p, output, include_audio, audio_shift)
 
     def process(self, p, *args):
         integration.process(p)

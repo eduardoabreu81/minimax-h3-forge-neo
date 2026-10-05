@@ -23,7 +23,7 @@ except ImportError:
     torch = None
 
 from forge_h3 import integration, keyframes
-from forge_h3.contracts import H3Error, set_pending_error
+from forge_h3.contracts import H3Error, raise_pending_error, set_pending_error
 
 WIDTH, HEIGHT, FRAMES = 96, 64, 22
 
@@ -299,6 +299,14 @@ class FlowTests(unittest.TestCase):
         self.use_ref2va()
         with self.assertRaisesRegex(H3Error, "up to 9"):
             integration.before_process(Img2Img(references=[Image.new("RGB", (32, 32))] * 9), "Video", True)
+
+    def test_script_rejection_prints_one_line_and_stops_at_the_model(self):
+        self.use_ref2va()
+        with patch("builtins.print") as printed:
+            integration.script_before_process(Img2Img(references=[Image.new("RGB", (32, 32))] * 9), "Video", True)
+        self.assertRegex(printed.call_args.args[0], r"^\[MiniMax H3\] H3 Ref2VA takes up to 9 reference pictures; 10 were given")
+        with self.assertRaisesRegex(H3Error, "up to 9"):
+            raise_pending_error()
 
     def test_fl2va_after_ref2va_drops_the_references(self):
         self.use_ref2va()

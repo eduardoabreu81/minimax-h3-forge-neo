@@ -74,6 +74,15 @@ def before_process(p, output, include_audio, audio_shift=AUDIO_SHIFT):
         raise
 
 
+def script_before_process(p, output, include_audio, audio_shift=AUDIO_SHIFT):
+    """before_process as Forge's script runner calls it: a rejected request prints one line instead of the traceback
+    Forge logs for any exception; the error stays pending and stops the generation when the model is first called."""
+    try:
+        before_process(p, output, include_audio, audio_shift)
+    except H3Error as error:
+        print(f"[MiniMax H3] {error}")
+
+
 def validate_img2img(p, mode="fl2va"):
     if not getattr(p, "init_images", None):
         role = "<Picture 1>, the first reference" if mode == "ref2va" else "the first frame"
