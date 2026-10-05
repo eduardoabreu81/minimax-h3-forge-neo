@@ -8,7 +8,6 @@ import logging
 import os
 
 import torch
-import torch.nn as nn
 from backend import loader, memory_management
 from backend.nn import krea
 from backend.nn.llm import llama
@@ -20,6 +19,7 @@ from transformers.modeling_utils import no_init_weights
 
 from . import model, release, taeh3, vae
 from .engine import MiniMaxH3Engine
+from .islands import fp32_islands, restore_fp32
 from .text_encoder import Qwen3VL32B
 from .transformer import MiniMaxH3Model
 
@@ -30,12 +30,6 @@ TE_PREFIX = "qwen3vl_32b.transformer."
 
 MISSING_TE = ("MiniMax H3 needs its Qwen3-VL 32B text encoder: select qwen3vl_32b_minimax_h3_*.safetensors "
               "under VAE / Text Encoder")
-
-# layers ComfyUI keeps in fp32 whatever the model dtype; the pruned builds add the adaLN projections, which take the
-# fp32 time-embedding curve
-FP32_LAYERS = ("video_patch_proj.", "audio_patch_proj.", "final_layer.video_out.", "final_layer.audio_out.",
-               "time_embedder.", "adaln_t_table", "rope.inv_freq")
-FP32_CURVE_LAYERS = (".adaln_proj.linear.",)
 
 _applied = False
 _sampling_h3 = False
@@ -124,30 +118,6 @@ def _load_vae(state_dict: dict) -> vae.AutoencoderMiniMaxH3:
     return pair
 
 
-def _fp32_islands(state_dict: dict, curve: bool) -> dict:
-    quantized = {k[: -len("comfy_quant")] for k in state_dict if k.endswith(".comfy_quant")}
-    islands = {}
-    for k, v in state_dict.items():
-        if not isinstance(v, torch.Tensor) or not v.is_floating_point():
-            continue
-        if any(k.startswith(q) for q in quantized):
-            continue
-        if k.startswith(FP32_LAYERS) or (curve and any(p in k for p in FP32_CURVE_LAYERS)):
-            islands[k] = v
-    return islands
-
-
-def _restore_fp32(dit: nn.Module, islands: dict) -> None:
-    # the loader stores every plain layer at one dtype; put ComfyUI's fp32 layers back at full precision
-    for key, value in islands.items():
-        owner_name, _, name = key.rpartition(".")
-        owner = dit.get_submodule(owner_name) if owner_name else dit
-        if name in owner._parameters:
-            owner._parameters[name] = nn.Parameter(value.to(torch.float32), requires_grad=False)
-        elif name in owner._buffers:
-            owner._buffers[name] = value.to(torch.float32)
-
-
 def _hook_components() -> None:
     original = loader.load_huggingface_component
 
@@ -159,10 +129,10 @@ def _hook_components() -> None:
             return _load_vae(state_dict)
         if cls_name == "MiniMaxH3Transformer3DModel":
             # the Krea 2 branch is a generic single-stream DiT load: dtype, quantization and device handling
-            islands = _fp32_islands(state_dict, curve="adaln_t_table" in state_dict)
+            islands = fp32_islands(state_dict, curve="adaln_t_table" in state_dict)
             with _swapped(krea, "SingleStreamDiT", MiniMaxH3Model):
                 dit = original(guess, component_name, lib_name, "Krea2Transformer2DModel", repo_path, state_dict)
-            _restore_fp32(dit, islands)
+            restore_fp32(dit, islands)
             return dit
         if cls_name == "Qwen3VLModel":
             if not isinstance(state_dict, dict) or len(state_dict) <= 16:

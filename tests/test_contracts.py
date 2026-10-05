@@ -116,6 +116,114 @@ class HeaderTests(unittest.TestCase):
         self.assertEqual([m.role for m in components.models], ["dit", "text_encoder", "video_vae", "audio_vae"])
 
 
+def quantized_checkpoint(path, formats, metadata=None):
+    """DIT plus one comfy_quant JSON tensor per format, with its bytes, as ComfyUI's quantized files store them."""
+    header, blobs, offset = {}, [], 0
+    for name, (dtype, shape) in DIT.items():
+        header[name] = {"dtype": dtype, "shape": shape, "data_offsets": [offset, offset]}
+    for i, fmt in enumerate(formats):
+        blob = json.dumps({"format": fmt, "convrot_groupsize": 256}).encode()
+        header[f"blocks.{i}.mlp.fc1.comfy_quant"] = {"dtype": "U8", "shape": [len(blob)],
+                                                     "data_offsets": [offset, offset + len(blob)]}
+        blobs.append(blob)
+        offset += len(blob)
+    if metadata:
+        header["__metadata__"] = metadata
+    raw = json.dumps(header).encode()
+    path.write_bytes(struct.pack("<Q", len(raw)) + raw + b"".join(blobs))
+    return path
+
+
+class QuantizationLabelTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def test_w4a8_metadata_is_not_labelled_w6a8(self):
+        layers = {"blocks.0.attn.qkv_proj": {"format": "asym_w4a8_int8", "group_size": 16}}
+        path = checkpoint(self.root / "kijai.safetensors", dict(DIT, **{"blocks.0.attn.qkv_proj.weight_s_rel": ("F32", [1])}),
+                          {"_quantization_metadata": json.dumps({"layers": layers})})
+        self.assertEqual(inspect_model(path).quantization, "w4a8")
+
+    def test_comfy_quant_tensors_give_the_format(self):
+        self.assertEqual(inspect_model(quantized_checkpoint(self.root / "int4.safetensors", ["convrot_w4a4"])).quantization,
+                         "int4")
+        mixed = quantized_checkpoint(self.root / "mixed.safetensors", ["convrot_w4a4", "int8_tensorwise", "convrot_w4a4"])
+        self.assertEqual(inspect_model(mixed).quantization, "int4 + int8")
+
+
+GGML = {"F32": 0, "F16": 1, "Q8_0": 8, "Q4_K": 12, "IQ1_S": 19, "BF16": 30}
+
+
+def gguf_string(text):
+    raw = text.encode()
+    return struct.pack("<Q", len(raw)) + raw
+
+
+def gguf_checkpoint(path, tensors, metadata=None):
+    """A GGUF v3 header without tensor data: string metadata, then name, ggml dims (innermost first), type, offset."""
+    metadata = metadata or {}
+    out = [b"GGUF", struct.pack("<IQQ", 3, len(tensors), len(metadata))]
+    for key, value in metadata.items():
+        out += [gguf_string(key), struct.pack("<I", 8), gguf_string(value)]
+    for name, (dtype, shape) in tensors.items():
+        out += [gguf_string(name), struct.pack("<I", len(shape)), struct.pack(f"<{len(shape)}Q", *reversed(shape)),
+                struct.pack("<IQ", GGML[dtype], 0)]
+    path.write_bytes(b"".join(out))
+    return path
+
+
+GGUF_DIT = dict(DIT, **{"blocks.0.attn.qkv_proj.weight": ("Q4_K", [21504, 5376]),
+                        "blocks.0.mlp.fc1.weight": ("Q4_K", [28672, 5376]),
+                        "blocks.0.norm1.weight": ("BF16", [5376]),
+                        "video_patch_proj.weight": ("F32", [5376, 96])})
+
+
+class GGUFTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def test_gguf_dit_is_recognized_from_its_tensor_table(self):
+        item = inspect_model(gguf_checkpoint(self.root / "any-name.gguf", GGUF_DIT, {"general.name": "x"}))
+        self.assertEqual((item.role, item.quantization, item.variant), ("dit", "gguf Q4_K", "standard"))
+
+    def test_gguf_shapes_are_read_in_torch_order(self):
+        header = read_header(gguf_checkpoint(self.root / "model.gguf", GGUF_DIT))
+        self.assertEqual(header["blocks.0.attn.qkv_proj.weight"], {"dtype": "Q4_K", "shape": [21504, 5376]})
+        self.assertEqual(header["__metadata__"], {})
+
+    def test_gguf_dit_resolves_with_safetensors_modules(self):
+        dit = gguf_checkpoint(self.root / "model.gguf", GGUF_DIT)
+        paths = [checkpoint(self.root / f"{n}.safetensors", t) for n, t in (("te", TE), ("v", VIDEO_VAE), ("a", AUDIO_VAE))]
+        self.assertEqual(resolve_components(dit, paths).dit.quantization, "gguf Q4_K")
+
+    def test_gguf_types_forge_cannot_dequantize_are_refused(self):
+        path = gguf_checkpoint(self.root / "tiny.gguf", dict(DIT, **{"blocks.0.mlp.fc1.weight": ("IQ1_S", [28672, 5376])}))
+        with self.assertRaisesRegex(H3Error, "IQ1_S"):
+            inspect_model(path)
+
+    def test_gguf_text_encoder_is_refused_with_a_clear_message(self):
+        path = gguf_checkpoint(self.root / "qwen.gguf", {"blk.0.attn_q.weight": ("Q4_K", [5120, 5120]),
+                                                         "token_embd.weight": ("Q8_0", [151936, 5120])})
+        with self.assertRaisesRegex(H3Error, "GGUF text encoders are not supported"):
+            inspect_model(path)
+
+    def test_gguf_header_is_bounded_and_checked(self):
+        path = self.root / "bad.gguf"
+        path.write_bytes(b"GGUF" + struct.pack("<IQQ", 3, 10**9, 0))
+        with self.assertRaisesRegex(H3Error, "GGUF"):
+            read_header(path)
+        path.write_bytes(b"GGUF" + struct.pack("<IQQ", 3, 1, 0) + gguf_string("w"))
+        with self.assertRaisesRegex(H3Error, "truncated"):
+            read_header(path)
+        path.write_bytes(b"NOPE")
+        with self.assertRaisesRegex(H3Error, "magic"):
+            read_header(path)
+
+
 class RequestTests(unittest.TestCase):
     def test_grid_alignment_and_duration(self):
         self.assertEqual([align_frames(n) for n in (1, 5, 6, 123, 124)], [5, 5, 22, 124, 124])
