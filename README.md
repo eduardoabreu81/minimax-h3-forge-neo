@@ -3,7 +3,7 @@
 <div align="center">
 
 [![Forge Neo](https://img.shields.io/badge/Forge-Neo-blue)](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)
-[![Version](https://img.shields.io/badge/Version-0.4.0-brightgreen)](https://github.com/eduardoabreu81/minimax-h3-forge-neo)
+[![Version](https://img.shields.io/badge/Version-0.5.0-brightgreen)](https://github.com/eduardoabreu81/minimax-h3-forge-neo)
 ![Status](https://img.shields.io/badge/Status-Work_in_progress-orange)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-green)](LICENSE)
 
@@ -14,7 +14,7 @@
 Generate **videos with sound** with **[MiniMax H3](https://github.com/MiniMax-AI/MiniMax-H3)** inside Forge Neo, using the checkpoint, preset and Generate button you already know - describe the scene and its sounds, or start from a picture, and get an MP4 with picture and audio made together.
 
 > [!Important]
-> **Work in progress.** Text-to-video with sound and first/last frame work, and were tested on a 48 GB GPU with about 50 GB of system RAM. H3 is a very large model - smaller machines have not been tested yet.
+> **Work in progress.** Text-to-video with sound and first/last frame work, and were tested on a 48 GB GPU and on a 24 GB RTX 4090. H3 is a very large model: with the [smaller files](#-installation) a 24 GB card needs about 48 GB of system RAM. Cards under 24 GB have not been tested yet.
 >
 > This extension requires an up-to-date **Forge Neo** (the `neo` branch, updated on or after 2 October 2026). On an older version it stays disabled and tells you so in the console - Forge Neo itself keeps working as usual.
 
@@ -33,6 +33,13 @@ Generate **videos with sound** with **[MiniMax H3](https://github.com/MiniMax-AI
 ---
 
 ## 🆕 What's New
+
+### v0.5.0 - Smaller Files and 24 GB Cards
+
+- **Tested on a 24 GB card** - an RTX 4090 made 10-second clips at 960×544 and 576×768 with Forge's own memory management, no Never OOM needed
+- **Smaller files, same quality** - Kijai's W4A8 checkpoint (12.5 GB) and an INT4 text encoder (14.9 GB) use about half the system RAM of the INT8 set, and are faster on 24 GB cards
+- **GGUF checkpoints** - Q2_K to Q8_0 GGUF diffusion models load as they are
+- **Real format names** - the Components list shows what each file actually is (W4A8, INT4, GGUF...)
 
 ### v0.4.0 - Faster Attention, Sharper Preview, More Sound Control
 
@@ -77,6 +84,11 @@ Made inside Forge Neo, with sound. The previews are silent - **click one to down
 | :---: | :---: | :---: |
 | [![A motorcycle rider in a cel-shaded synthwave city](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/motorcycle-8s.gif)](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/motorcycle-8s.mp4) | [![A woman by a train window at night looks outside](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/train-first-frame.gif)](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/train-first-frame.mp4) | [![A woman cooks dinner and talks to someone off camera](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/kitchen-speech.gif)](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/kitchen-speech.mp4) |
 | Synthwave soundtrack and engine | img2img, first frame | Dialogue and kitchen sounds |
+
+| Puppy, 5 s | Two friends, in Portuguese | Village festival, 10 s |
+| :---: | :---: | :---: |
+| [![A golden retriever puppy chases soap bubbles in a backyard](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/rtx4090-puppy.gif)](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/rtx4090-puppy.mp4) | [![Two friends in Flamengo and Fluminense shirts laugh and clink beer glasses in a Rio bar](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/rtx4090-boteco.gif)](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/rtx4090-boteco.mp4) | [![A drone glides over a fishing village festival as fireworks burst over the sea](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/rtx4090-festival.gif)](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/rtx4090-festival.mp4) |
+| RTX 4090 (24 GB), smaller files | RTX 4090, 10 s, dialogue | RTX 4090, 960×544 |
 
 Every prompt, the exact settings and the generation times - plus more clips, FastH3 and a community checkpoint - are in the **[Examples](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Examples)** page of the wiki.
 
@@ -123,7 +135,9 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 ### 🧠 Forge Memory Management
 
 - The model stays loaded between generations, like any Forge checkpoint
+- **24 GB cards** work with Forge's own offloading - 10-second clips on an RTX 4090 without Never OOM
 - **Never OOM Integrated** works with H3 - a 6-second clip in about 22 GB of VRAM
+- **Smaller formats** - W4A8 and INT4 files and GGUF checkpoints, for less RAM and disk
 - Switching from H3 to another model releases it first, so system RAM does not run out
 
 ### 🛡️ Safe by Design
@@ -151,11 +165,18 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 | Audio VAE | [minimax_h3_audio_vae_fp32](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/e5eb578a89295337b8ff433a035929ce0279e0b6/vae/minimax_h3_audio_vae_fp32.safetensors) | `models/VAE` |
 | Turbo LoRA (optional) | [minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/e5eb578a89295337b8ff433a035929ce0279e0b6/loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors) | `models/Lora` |
 
+**For a 24 GB card**, or to use less system RAM, swap the checkpoint and the text encoder for these smaller files (same folders, same VAEs):
+
+| Part | File | Size |
+| :--- | :--- | :--- |
+| H3 checkpoint | [minimax_h3_fl2va_pruned_w4a8_mixed](https://huggingface.co/Kijai/MiniMax-H3-experimental/blob/main/minimax_h3_fl2va_pruned_w4a8_mixed.safetensors) (Kijai) | 12.5 GB |
+| Text encoder | [qwen3vl_32b_minimax_h3_int4_convrot](https://huggingface.co/Merserk/MiniMax-H3-INT4-ConvRot/blob/main/qwen3vl_32b_minimax_h3_int4_convrot.safetensors) (Merserk) | 14.9 GB |
+
 6. Make sure **FFmpeg** is installed (or set its path in **Settings** → **MiniMax H3**)
 7. Pick the **h3** UI preset, the checkpoint, and **all three** of the text encoder, the video VAE and the audio VAE under **VAE / Text Encoder**
 
 > [!Note]
-> H3 is a large model: the four files take about 50 GB of disk, and Forge loads them all into system RAM. It was tested on a 48 GB GPU with about 50 GB of RAM. Other files that work - FastH3, Kijai's INT8 video VAE, community checkpoints - are listed in the **[Models](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Models)** page.
+> H3 is a large model and Forge keeps its files in system RAM. On a 24 GB RTX 4090, Forge used about **35 GB of RAM** with the smaller set and about **67 GB** with the INT8 checkpoint and the INT4 text encoder; on a 48 GB card the INT8 set peaked at about 46 GiB. Other files that work - FastH3, GGUF checkpoints, Kijai's INT8 video VAE, community checkpoints - and the measurements are in the **[Models](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Models)** and **[Performance and Memory](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Performance-and-Memory)** pages.
 
 ---
 
@@ -199,7 +220,8 @@ With the default range, a person or object turning on itself may "morph" instead
 - Give background sounds a moment and some weight - "At 3 seconds a train pulls in with a loud screech of brakes" is heard; "a train in the background" may not be. Use 20 steps when they matter
 - Music can be described like a producer would - genre, tempo and instruments, for example "a K-pop trap beat at 160 BPM with a heavy 808 bass, below the voices"
 - Try **Audio shift** 6 for a different delivery of the same line - neither value is better, they are different takes
-- Put dialogue in quotes after who says it, and keep it short for the clip length
+- Put dialogue in quotes after who says it, and keep it short for the clip length. MiniMax's [prompt guide](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_base_en.md) shows the layout the model was trained with, with each line as `<d>[English] ...</d>` after its speaker
+- Describe what every person wears - a detail given to one person may be copied to the others
 - For several events, put them in order, give timings for long clips, and leave time for the last one
 - At CFG 1 the negative prompt is not used - say what you do not want in the prompt itself
 - From a picture, describe the motion and the sound, not what the picture already shows
@@ -221,7 +243,9 @@ With the default range, a person or object turning on itself may "morph" instead
 - **[ComfyUI](https://github.com/Comfy-Org/ComfyUI)** - reference implementation of the model
 - **[Comfy-Org](https://huggingface.co/Comfy-Org/MiniMax-H3)** - the model files and the turbo LoRA
 - **[FastVideo](https://huggingface.co/FastVideo/FastVideo-FastH3-8-Step-V2)** - FastH3
-- **[Kijai](https://huggingface.co/Kijai)** - the INT8 video VAE
+- **[Kijai](https://huggingface.co/Kijai)** - the INT8 video VAE and the W4A8 checkpoint
+- **[Merserk](https://huggingface.co/Merserk/MiniMax-H3-INT4-ConvRot)** - the INT4 text encoder
+- **[unsloth](https://huggingface.co/unsloth/MiniMax-H3-GGUF)** - GGUF checkpoints
 - **[madebyollin](https://github.com/madebyollin/taehv)** - the taeh3 live preview decoder
 - **[larryvrh](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora)** and **[lightx2v](https://github.com/ModelTC/Minimax-H3-Turbo)** - turbo LoRAs and settings
 

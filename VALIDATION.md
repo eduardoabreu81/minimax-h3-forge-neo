@@ -1,12 +1,41 @@
-# Validation: 0.4.0
+# Validation: 0.5.0
 
-GPU sessions on 2026-10-03 and 2026-10-04 (America/Sao_Paulo), CPU tests on 2026-10-04. The published examples, with prompts and settings, are in the wiki's [Examples](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Examples) page; the full measurement tables are in [Performance and Memory](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Performance-and-Memory).
+GPU sessions on 2026-10-03, 2026-10-04 and 2026-10-05 (America/Sao_Paulo), CPU tests on 2026-10-05. The published examples, with prompts and settings, are in the wiki's [Examples](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Examples) page; the full measurement tables are in [Performance and Memory](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Performance-and-Memory).
 
 ## Environment
 
 One NVIDIA A40 (48 GB) with about 50 GB of system RAM (46.6 GiB container limit), RunPod, three Pods in two regions. Forge Neo `97b26fb` (`neo-2.29.2`), Python 3.13, Torch 2.13 cu130, comfy-kitchen 0.2.36 with its CUDA backend, PyTorch SDPA attention. Standard model set: Comfy-Org pruned INT8 ConvRot DiT, INT8 ConvRot text encoder, fp16 video VAE and fp32 audio VAE (revision `e5eb578`).
 
 Requests went through Forge's API (`/sdapi/v1/txt2img` and `img2img`), which runs the same processing as the Generate button. Times are wall time for the whole request, model loading included when the model was not loaded yet. RAM was sampled once per second.
+
+## 0.5.0: smaller files and 24 GB cards (2026-10-05)
+
+CPU: 91 tests and Ruff pass. New: GGUF header reading (bounded counts and strings, truncation, magic, IQ types refused, GGUF text encoders refused with a message), format labels from `_quantization_metadata` and `comfy_quant` tensors, and the fp32 islands restored from a ParameterGGUF-like wrapper (`native/islands.py`).
+
+**A40 (EU-SE-1, 55 GB RAM), 4-bit formats.** h3 preset, six prompts (Italian speech, close-up portrait, skateboard trick, Holi colors, neon alley at night, 2D cartoon), 124 frames, same seed per prompt; the owner reviewed every clip and the sound per format.
+
+| Checkpoint + text encoder | s/step 640×384 / 576×768 | Result |
+| --- | --- | --- |
+| INT8 + INT8 (reference) | 4.30 / 9.0 | reference |
+| Kijai W4A8 mixed (`asym_w4a8_int8`) + INT8 | 4.25 / 9.1 | as good as INT8; chef nearly in sync with INT8 |
+| tsolful INT4BQ (`convrot_w4a4` + INT8) + INT8 | 4.30 / 9.1 | acceptable: skater toward the camera, powder not thrown up, cat ends inside the pot |
+| INT8 + Merserk INT4 text encoder (`convrot_w4a4`) | 4.2 / 9.0 | almost the same clips as INT8; cartoon ending wrong (a second pot) |
+| INT4BQ + INT4 text encoder | 4.2 / 9.0 | acceptable; best skate trick; cartoon ending wrong |
+| W4A8 + INT4 text encoder | 4.2 / 9.0 | as good as INT8; cartoon right |
+| Merserk INT4 DiT (= Civitai 2830162), bird / laundromat | 1.73 (INT8 2.34) | broken: bird vanished, laundromat events missing |
+
+Audio: no clip silent or broken; H3 peaks near -0.4 dBFS in every format, INT8 included.
+
+**RTX 4090 (EUR-NO-1, 86 GB RAM, CUDA 13.2).** Prompts in MiniMax's three-field format with `<d>[Portuguese] ...</d>`. Puppy 640×384/124, bar dialogue 576×768/243, village festival 960×544/243.
+
+| Checkpoint + text encoder | Puppy | Bar | Festival | Peak RSS | Peak VRAM |
+| --- | --- | --- | --- | --- | --- |
+| W4A8 + INT4 | 84 s, 2.67 s/step | 334 s, 14.5 | 427 s, 19.0 | 35 GB | 21 GB |
+| INT8 + INT4 | 120 s, 3.11 | 419 s, 18.0 | 525 s, 23.0 | 67 GB | 21 GB |
+| INT8 + INT8 | 116 s, 2.96 | 408 s, 17.7 | 524 s, 23.1 | 80 GB | 21 GB |
+| unsloth GGUF Q4_K + INT4 | 121 s, 4.53 | 443 s, 20.1 | 558 s, 25.3 | 36 GB | 22 GB |
+
+No Never OOM needed. The first GGUF clip after load ran out of VRAM by 119 MiB once; the rerun passed. The first GGUF attempt failed in the extension (`nn.Parameter` around Forge's ParameterGGUF), fixed in `native/islands.py`.
 
 ## 0.4.0 features (A40, EU-SE-1, 2026-10-04)
 
@@ -114,7 +143,7 @@ They do not load weights or run kernels at full size.
 
 - GPUs other than the A40, and machines with less than about 50 GB of RAM.
 - Formal review of audio quality and audio-video synchronization.
-- The full INT8 DiT, GGUF files, FastH3's sparse attention (VSA), multiple references and uploaded-audio conditioning.
+- The full INT8 DiT, GGUF text encoders, cards under 24 GB, hosts with less RAM than the measured peaks, multiple references and uploaded-audio conditioning.
 
 ## Earlier versions
 

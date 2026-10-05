@@ -1,6 +1,6 @@
 # MiniMax H3 for Forge Neo: handover
 
-Updated: 2026-10-04 (night), America/Sao_Paulo. Version 0.4.0, work in progress. 0.4.0 adds the Audio shift slider, H3's own sparse attention and FastH3's VSA (`native/sparse.py`), madebyollin's temporal taeh3 preview and on-the-fly LoRAs as low-rank terms (`native/lora.py`), all validated on an A40 the same night. H3 runs on a native Forge Neo backend (since 0.2.0). First and last frame, FastH3, community INT8/W4A8 checkpoints, Kijai's INT8 video VAE, the RGB live preview and the early release of a replaced H3 model were validated on an A40 on 2026-10-04. This roadmap describes future work; it does not authorize paid resources.
+Updated: 2026-10-05, America/Sao_Paulo. Version 0.5.0, work in progress. 0.5.0 adds GGUF checkpoints, real format labels and the smaller set for 24 GB cards (Kijai W4A8 + Merserk INT4 text encoder), validated on an A40 and an RTX 4090 the same day. 0.4.0 adds the Audio shift slider, H3's own sparse attention and FastH3's VSA (`native/sparse.py`), madebyollin's temporal taeh3 preview and on-the-fly LoRAs as low-rank terms (`native/lora.py`), all validated on an A40 the same night. H3 runs on a native Forge Neo backend (since 0.2.0). First and last frame, FastH3, community INT8/W4A8 checkpoints, Kijai's INT8 video VAE, the RGB live preview and the early release of a replaced H3 model were validated on an A40 on 2026-10-04. This roadmap describes future work; it does not authorize paid resources.
 
 ## Decisions to preserve
 
@@ -19,13 +19,15 @@ Forge Neo loads the H3 checkpoint, text encoder and both VAEs through its own lo
 
 | Evidence | Result |
 | --- | --- |
-| CPU tests | 61 tests: layouts against nine real checkpoint headers, toy forward passes, VAE round trips, keyframe tokens, model release, preview hooks and Forge's generation order replayed with stand-ins |
+| CPU tests | 91 tests: layouts against nine real checkpoint headers, toy forward passes, VAE round trips, keyframe tokens, model release, preview hooks and Forge's generation order replayed with stand-ins |
 | T2V with audio (A40) | Bird 53.5 s; laundromat 196.9 s at Res Multistep 20; neon 15 s 1K 1628 s at 20 steps; bus stop 15 s 840.8 s with the turbo LoRA on the fly |
 | First and last frame (A40) | First, last, both, CFG 3, turbo LoRA, Never OOM; non-H3 pictures at 768p followed with identity and framing |
 | Modes (A40) | Still image, audio off, CFG 3 with a negative prompt, interruption and recovery, clear errors, switching to SD 1.5 and back, RGB live preview, browser UI |
 | Files (A40) | Pruned INT8, w6a8 and fp8 DiTs; FastH3 8-step V2 INT8 (dense attention); Eros Max beta5 INT8 and W4A8; INT8 text encoder; Comfy-Org, original MiniMax and Kijai INT8 video VAEs; Comfy-Org and larryvrh turbo LoRAs |
 | Forge features (A40) | Never OOM Integrated (about 22 GB VRAM), Sparse Attention Integrated (33% faster per step on a 33k-token clip), early release of a replaced H3 (switch peak 12.4 GiB instead of 46.3) |
-| Pending | taeh3 TAESD preview on a GPU; other GPUs and less RAM |
+| Files (0.5.0) | Kijai W4A8, tsolful INT4BQ (acceptable), unsloth GGUF Q4_K, Merserk INT4 text encoder; Merserk INT4 DiT loads but is broken |
+| 24 GB (RTX 4090) | Every tested combo ran 10-second clips up to 960×544 without Never OOM; W4A8 + INT4 fastest, 35 GB RSS |
+| Pending | taeh3 TAESD preview on a GPU; cards under 24 GB and hosts with less RAM |
 
 Pins: Forge Neo `97b26fb` (GPU tests), ComfyUI `e9027f2` (port source), Comfy-Org/MiniMax-H3 `e5eb578`, MiniMaxAI/MiniMax-H3 `42ed227`. Pod environment: Python 3.13, Torch 2.13 cu130, comfy-kitchen 0.2.36.
 
@@ -68,16 +70,16 @@ A low-resolution draft, then `MinimaxH3LatentUpscaler3D` (LBH-123-AI, MIT, a 3D 
 ### 3. Memory
 
 - Load the text encoder only to encode the prompt. Forge loads checkpoint, text encoder and VAEs together, about 50 GiB (DiT 19.5, text encoder 25.3, VAEs 5.4); 15-second clips peak at 46.3 GiB. Releasing the text encoder after encoding helps while sampling but not the load peak. Measure with limited RAM on the Pod first.
-- 24 GB cards with Never OOM, then smaller.
+- 24 GB cards are validated (0.5.0). Next: 16 and 12 GB with GGUF checkpoints and Never OOM.
 - A separate extension that releases replaced models early for any architecture (Wan 2.2 A14B, Flux, Qwen-Image).
 
 ### 4. More files
 
-NVFP4 AWQ text encoder (refused: wrong conditioning in Forge) or community INT4 text encoders, full INT8 DiT (needs more RAM), GGUF, INT8 LoRA repacks. Each needs its own GPU check before it is listed.
+NVFP4 AWQ text encoder (refused: wrong conditioning in Forge), GGUF text encoders (need Qwen3-VL's separate mmproj for keyframes), full INT8 DiT (needs more RAM), INT8 LoRA repacks. Each needs its own GPU check before it is listed.
 
 ### 5. More conditioning
 
-Multiple references (Ref2VA), uploaded audio during sampling, the PDD LoRA bank, image editing with a first frame, Still image with keyframes.
+Phase 2, set by the owner: pose/depth/edge control (alibaba-pai Fun Controlnet Union) and multiple references (Ref2VA). Then uploaded audio during sampling, the PDD LoRA bank, image editing with a first frame, Still image with keyframes.
 
 ## Continuing locally
 

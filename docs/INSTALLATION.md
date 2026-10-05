@@ -8,7 +8,7 @@ Version 0.3.0. MiniMax H3 runs on Forge Neo's own loader, samplers and memory ma
 - **FFmpeg** for the MP4 export, on the `PATH` or set in **Settings → MiniMax H3**.
 - **Disk:** about 50 GiB for the four required files.
 - **System RAM:** Forge loads the checkpoint, text encoder and VAEs together, about 50 GiB with the tested files. The A40 test machine had about 50 GB; 15-second clips peaked at 46.3 GiB. Changing the text encoder on a loaded model exceeded it.
-- **GPU:** only an NVIDIA A40 (48 GB) was tested. With **Never OOM Integrated** (UNet always offloaded) a 158-frame 448×672 clip used about 22 GB of VRAM. Smaller cards are untested.
+- **GPU:** tested on an NVIDIA A40 (48 GB) and an RTX 4090 (24 GB). On the 4090 every tested set ran 10-second clips without Never OOM; with Kijai's W4A8 checkpoint and Merserk's INT4 text encoder Forge's RSS peaked at 35 GB. Cards under 24 GB are untested.
 
 ## Install
 
@@ -52,7 +52,11 @@ Links point to the Comfy-Org revision `e5eb578`. The text encoder includes the v
 | H3 Eros Max beta5 (Civitai, adult-oriented), INT8 and W4A8 | Work at 8 steps without a LoRA (turbo merged in). |
 | `qwen3vl_32b_minimax_h3_nvfp4_awq` text encoder | **Refused:** it loads in Forge but encodes prompts wrongly (a bird prompt gave a dog). |
 | `minimax_h3_ref2va_*` checkpoints | **Refused:** the reference-to-video mode is not supported yet. |
-| GGUF files | Not supported. |
+| [Kijai W4A8 mixed](https://huggingface.co/Kijai/MiniMax-H3-experimental/blob/main/minimax_h3_fl2va_pruned_w4a8_mixed.safetensors) DiT and [Merserk INT4](https://huggingface.co/Merserk/MiniMax-H3-INT4-ConvRot/blob/main/qwen3vl_32b_minimax_h3_int4_convrot.safetensors) text encoder | Work; the recommended pair for 24 GB cards. |
+| tsolful INT4BQ mixed DiT | Works, follows actions less precisely. |
+| Merserk INT4 DiT (also Civitai 2830162) | Loads, quality broken. |
+| GGUF DiTs, Q2_K to Q8_0 (tested: unsloth pruned Q4_K) | Work; slowest format. IQ types are refused. |
+| GGUF text encoders | Refused (Qwen3-VL's vision part is a separate file). |
 
 Community files are recognized by their tensor layout, not by their name. A file called H3 on Civitai may still be another architecture or format; the extension says so when it cannot use a file.
 
