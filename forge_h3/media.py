@@ -62,21 +62,44 @@ class VideoInfo:
     has_audio: bool
 
 
-def probe_video(path, ffmpeg="") -> VideoInfo:
-    """Size (as FFmpeg decodes it, phone rotation applied), duration and sound of a video, from FFmpeg's own report;
-    imageio's bundled FFmpeg comes without ffprobe."""
-    name = Path(path).name
+def _report(path, ffmpeg=""):
+    """FFmpeg's own description of a file (imageio's bundled FFmpeg comes without ffprobe)."""
     try:
         result = subprocess.run([find_ffmpeg(ffmpeg), "-hide_banner", "-nostdin", "-i", str(path)],
                                 capture_output=True, check=False)
     except OSError as exc:
-        raise H3Error(f"FFmpeg could not start to read {name}: {exc}") from None
-    report = result.stderr.decode("utf-8", "replace")
-    size = re.search(r"Stream #\S+.*?: Video: .*?(\d{2,5})x(\d{2,5})", report)
+        raise H3Error(f"FFmpeg could not start to read {Path(path).name}: {exc}") from None
+    return result.stderr.decode("utf-8", "replace")
+
+
+def _video_size(report):
+    # the first real video stream: an MP3's cover art is a one-picture "(attached pic)" stream
+    for line in report.splitlines():
+        size = re.search(r"Stream #\S+.*?: Video: .*?(\d{2,5})x(\d{2,5})", line)
+        if size and "(attached pic)" not in line:
+            return int(size.group(1)), int(size.group(2))
+    return None
+
+
+def media_kind(path, ffmpeg="") -> str:
+    """"video" for a file with moving pictures, "audio" for sound alone (cover art aside)."""
+    report = _report(path, ffmpeg)
+    if _video_size(report):
+        return "video"
+    if re.search(r"Stream #\S+.*?: Audio:", report):
+        return "audio"
+    raise H3Error(f"FFmpeg found no video or audio in {Path(path).name}.")
+
+
+def probe_video(path, ffmpeg="") -> VideoInfo:
+    """Size (as FFmpeg decodes it, phone rotation applied), duration and sound of a video."""
+    name = Path(path).name
+    report = _report(path, ffmpeg)
+    size = _video_size(report)
     duration = re.search(r"Duration: (\d+):(\d+):(\d+(?:\.\d+)?)", report)
     if size is None or duration is None:
         raise H3Error(f"FFmpeg found no video in {name}.")
-    width, height = int(size.group(1)), int(size.group(2))
+    width, height = size
     rotation = re.search(r"rotation of (-?\d+(?:\.\d+)?) degrees", report)
     if rotation and round(abs(float(rotation.group(1)))) % 180 == 90:
         width, height = height, width

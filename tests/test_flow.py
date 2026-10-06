@@ -154,9 +154,9 @@ class FlowTests(unittest.TestCase):
         sys.modules["modules.sd_models"].get_closet_checkpoint_match = lambda value: types.SimpleNamespace(filename=str(path))
 
     def run_until_sampling(self, p, encode=True, audio_shift=3.0, ref_audios=(), ref_videos=(), keep_soundtrack=True,
-                           guide=None):
+                           guide=None, ref_media=()):
         """before_process .. process_before_every_sampling, as Forge calls them; returns the conditioning."""
-        integration.before_process(p, "Video", True, audio_shift, ref_audios, ref_videos, keep_soundtrack, guide)
+        integration.before_process(p, "Video", True, audio_shift, ref_audios, ref_videos, keep_soundtrack, guide, ref_media)
         p.sd_model = self.engine
         integration.process(p)
         if encode and isinstance(p, Img2Img):
@@ -406,13 +406,27 @@ class FlowTests(unittest.TestCase):
             integration.before_process(Txt2Img(), "Video", True, 3.0, (), ("a.mp4",))
 
     def test_panel_media_maps_the_inputs_and_fills_api_gaps(self):
-        media = integration.panel_media(["a.wav", None, None, "v.mp4", None, None, False, None, False, "g.wav", -22])
-        self.assertEqual((media["ref_audios"], media["ref_videos"], media["keep_soundtrack"]),
-                         (["a.wav", None, None], ["v.mp4", None, None], False))
+        media = integration.panel_media([["a.wav", "v.mp4"], False, None, False, "g.wav", -22])
+        self.assertEqual((media["ref_media"], media["keep_soundtrack"]), (["a.wav", "v.mp4"], False))
         self.assertEqual(media["guide"], {"video": None, "audio": "g.wav", "frame": -22, "soundtrack": False})
         # an API call with only Output, audio and Audio shift: no media, the soundtracks kept, no guide
-        self.assertEqual(integration.panel_media([]), {"ref_audios": [None] * 3, "ref_videos": [None] * 3,
-                                                       "keep_soundtrack": True, "guide": None})
+        self.assertEqual(integration.panel_media([]), {"ref_media": [], "keep_soundtrack": True, "guide": None})
+        self.assertEqual(integration.panel_media(["one.mp4"])["ref_media"], ["one.mp4"])
+
+    def test_the_single_file_list_is_split_by_kind_in_upload_order(self):
+        self.use_ref2va()
+        p = Txt2Img()
+        kinds = {"voice.wav": "audio", "b.mp4": "video", "beat.mp3": "audio", "a.mp4": "video"}
+        probe, read, sound = self.fake_videos({"a.mp4": (64, 64, 2.5, False), "b.mp4": (64, 64, 2.5, True),
+                                               "voice.wav": (0, 0, 2.0, False), "beat.mp3": (0, 0, 3.0, False)})
+        with probe, read as reader, sound, patch.object(references, "media_kind", side_effect=lambda path, ffmpeg="": kinds[path]):
+            self.run_until_sampling(p, ref_media=["voice.wav", "b.mp4", None, "beat.mp3", "a.mp4"])
+        self.assertEqual([call.args[0] for call in reader.call_args_list], ["b.mp4", "a.mp4"])
+        self.assertEqual((p.h3_request.reference_videos, p.h3_request.reference_audios), (2, 2))
+        # b.mp4's soundtrack is <Audio 1>; the clips follow in upload order
+        refs = self.engine.generation.refs
+        self.assertEqual([r["kind"] for r in refs], ["video_audio", "video", "audio", "audio"])
+        self.assertEqual([r["ref_audio_t"] for r in refs[2:]], [80, 120])
 
     def test_guide_audio_anchors_at_frame_zero_and_is_cut_to_the_clip(self):
         p = Txt2Img()

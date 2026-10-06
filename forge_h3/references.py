@@ -29,7 +29,7 @@ from .contracts import (
     SAMPLE_RATE,
     H3Error,
 )
-from .media import probe_video, read_audio, read_video
+from .media import media_kind, probe_video, read_audio, read_video
 
 CANVAS_MULTIPLE = 32
 # ComfyUI adapt_canvas: reference videos go to a 768 short edge, at most 768 x 1344 pixels
@@ -105,6 +105,15 @@ def collect_audios(paths, ffmpeg="") -> list[np.ndarray]:
     if total > MAX_REF_AUDIO_SECONDS:
         raise H3Error(f"H3 reference audio may last {MAX_REF_AUDIO_SECONDS:g} seconds in all; these last {total:.1f}.")
     return clips
+
+
+def split_media(paths, ffmpeg="") -> tuple[list, list]:
+    """The panel's reference files as (videos, audio clips), each kind in upload order; empty entries are skipped."""
+    videos, audios = [], []
+    for path in paths or ():
+        if path:
+            (videos if media_kind(path, ffmpeg) == "video" else audios).append(path)
+    return videos, audios
 
 
 def collect_videos(paths, clip_frames: int, keep_soundtrack=True, ffmpeg="") -> list[ReferenceVideo]:

@@ -13,6 +13,7 @@ from forge_h3.contracts import H3Error
 from forge_h3.media import (
     export_still,
     export_video,
+    media_kind,
     probe_video,
     read_audio,
     read_video,
@@ -119,6 +120,22 @@ class ReadAudioTests(unittest.TestCase):
         self.assertEqual(frames.shape, (1, 64, 64, 3))
         self.assertGreater(int(frames[0, 32, 4, 0]), 200)    # red on the left
         self.assertGreater(int(frames[0, 32, 60, 2]), 200)   # blue on the right
+
+    def test_media_kind_tells_videos_from_sound_and_cover_art(self):
+        ffmpeg = shutil.which("ffmpeg")
+        video, song, wav = self.root / "clip.mp4", self.root / "song.mp3", self.root / "sound.wav"
+        subprocess.run([ffmpeg, "-v", "error", "-f", "lavfi", "-i", "testsrc=size=64x64:duration=1",
+                        "-pix_fmt", "yuv420p", str(video)], check=True)
+        # an MP3 with cover art carries a one-picture "(attached pic)" video stream
+        subprocess.run([ffmpeg, "-v", "error", "-f", "lavfi", "-i", "sine=duration=1", "-f", "lavfi",
+                        "-i", "color=red:size=64x64:duration=1", "-map", "0:a", "-map", "1:v", "-frames:v", "1",
+                        "-c:v", "mjpeg", "-disposition:v", "attached_pic", str(song)], check=True)
+        subprocess.run([ffmpeg, "-v", "error", "-f", "lavfi", "-i", "sine=duration=1", str(wav)], check=True)
+        self.assertEqual([media_kind(path) for path in (video, song, wav)], ["video", "audio", "audio"])
+        notes = self.root / "notes.txt"
+        notes.write_text("not media")
+        with self.assertRaisesRegex(H3Error, "no video or audio in notes.txt"):
+            media_kind(notes)
 
     def test_phone_rotation_swaps_the_size(self):
         from unittest import mock

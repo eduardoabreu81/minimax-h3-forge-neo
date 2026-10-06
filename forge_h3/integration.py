@@ -9,15 +9,7 @@ import uuid
 from pathlib import Path
 
 from . import keyframes, references
-from .contracts import (
-    AUDIO_SHIFT,
-    FPS,
-    MAX_REF_AUDIOS,
-    MAX_REF_VIDEOS,
-    GenerationRequest,
-    H3Error,
-    set_pending_error,
-)
+from .contracts import AUDIO_SHIFT, FPS, GenerationRequest, H3Error, set_pending_error
 from .media import export_video, find_ffmpeg
 from .models import inspect_model, resolve_components
 
@@ -72,27 +64,26 @@ def validate_processing(p):
 
 
 def panel_media(values) -> dict:
-    """The H3 panel's media inputs after Output, audio and Audio shift, as before_process takes them: 3 audio clips,
-    3 videos, the soundtrack checkbox, then the guide video, its soundtrack checkbox, the guide audio and the guide
-    frame. An API call may send fewer; the rest keep their defaults."""
-    values = list(values) + [None] * (MAX_REF_AUDIOS + MAX_REF_VIDEOS + 5 - len(values))
-    videos_end = MAX_REF_AUDIOS + MAX_REF_VIDEOS
-    keep, guide_video, guide_soundtrack, guide_audio, guide_frame = values[videos_end:videos_end + 5]
+    """The H3 panel's media inputs after Output, audio and Audio shift, as before_process takes them: the reference
+    files (videos and audio clips together), the soundtrack checkbox, then the guide video, its soundtrack checkbox,
+    the guide audio and the guide frame. An API call may send fewer; the rest keep their defaults."""
+    files, keep, guide_video, guide_soundtrack, guide_audio, guide_frame = (list(values) + [None] * 6)[:6]
     guide = None
     if guide_video or guide_audio:
         guide = {"video": guide_video, "audio": guide_audio, "frame": 0 if guide_frame is None else guide_frame,
                  "soundtrack": guide_soundtrack is not False}
-    return {"ref_audios": values[:MAX_REF_AUDIOS], "ref_videos": values[MAX_REF_AUDIOS:videos_end],
-            "keep_soundtrack": keep is not False, "guide": guide}
+    if isinstance(files, str):
+        files = [files]
+    return {"ref_media": list(files or ()), "keep_soundtrack": keep is not False, "guide": guide}
 
 
 def before_process(p, output, include_audio, audio_shift=AUDIO_SHIFT, ref_audios=(), ref_videos=(), keep_soundtrack=True,
-                   guide=None):
+                   guide=None, ref_media=()):
     """Before Forge loads the model: check the request and turn Frames into a single H3 generation."""
     p.h3_request = None
     set_pending_error(None)
     try:
-        _before_process(p, output, include_audio, audio_shift, ref_audios, ref_videos, keep_soundtrack, guide)
+        _before_process(p, output, include_audio, audio_shift, ref_audios, ref_videos, keep_soundtrack, guide, ref_media)
     except H3Error as error:
         set_pending_error(error)
         raise
@@ -115,7 +106,8 @@ def validate_img2img(p, mode="fl2va"):
         raise H3Error("H3 does not take the latent upscale resize mode. Choose another Resize mode.")
 
 
-def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_videos=(), keep_soundtrack=True, guide=None):
+def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_videos=(), keep_soundtrack=True, guide=None,
+                    ref_media=()):
     p.h3_last_frame = None
     p.h3_references = []
     p.h3_reference_audios = []
@@ -138,8 +130,10 @@ def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_vi
         print("[MiniMax H3] FastH3 checkpoint: use 8 steps and Shift 10; turn on Sparse Attention Integrated for its VSA attention")
     last, refs, audios, videos = None, [], [], []
     ffmpeg = getattr(shared.opts, "h3_ffmpeg_path", "")
-    ref_audios = [path for path in ref_audios or () if path]
-    ref_videos = [path for path in ref_videos or () if path]
+    # the panel's single file list, told apart by FFmpeg, then any files an API call names by kind
+    media_videos, media_audios = references.split_media(ref_media, ffmpeg)
+    ref_audios = media_audios + [path for path in ref_audios or () if path]
+    ref_videos = media_videos + [path for path in ref_videos or () if path]
     if mode == "ref2va":
         # the original pictures (img2img input first), each scaled to the clip's area on its own
         refs = [references.prepare(image, p.width, p.height) for image in references.collect(p, is_img2img)]

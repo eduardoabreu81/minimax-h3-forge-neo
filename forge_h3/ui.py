@@ -64,15 +64,14 @@ class Panel:
             # Ref2VA only: the H3 panel's own video and audio inputs, as ImageStitch Integrated takes pictures only
             with gr.Accordion("Reference video and audio", open=False, visible=False,
                               elem_id=f"{self.tab}_h3_reference_media") as self.reference_media:
-                gr.Markdown("Up to 3 videos and 3 audio clips, each 2 to 15 seconds, 15 seconds in all per kind. In the "
-                            "prompt, videos are `<Video 1>`, `<Video 2>`...; `<Audio j>` counts the kept video "
-                            "soundtracks first, then the clips. A video longer than the clip keeps its first part.")
-                self.ref_videos = [gr.Video(sources=["upload"], label=f"Video {k + 1}",
-                                            elem_id=f"{self.tab}_h3_ref_video_{k + 1}") for k in range(MAX_REF_VIDEOS)]
+                gr.Markdown(f"Up to {MAX_REF_VIDEOS} videos and {MAX_REF_AUDIOS} audio clips, each 2 to 15 seconds, "
+                            "15 seconds in all per kind. Each kind is numbered in upload order: videos are `<Video 1>`, "
+                            "`<Video 2>`...; `<Audio j>` counts the kept video soundtracks first, then the clips. A "
+                            "video longer than the clip keeps its first part.")
+                self.ref_media = gr.File(file_count="multiple", file_types=["video", "audio"],
+                                         label="Reference videos and audio clips", elem_id=f"{self.tab}_h3_ref_media")
                 self.keep_soundtrack = gr.Checkbox(value=True, label="Use each video's soundtrack",
                                                    elem_id=f"{self.tab}_h3_keep_soundtrack")
-                self.ref_audios = [gr.Audio(sources=["upload"], type="filepath", label=f"Audio clip {j + 1}",
-                                            elem_id=f"{self.tab}_h3_ref_audio_{j + 1}") for j in range(MAX_REF_AUDIOS)]
             # any H3 checkpoint: one guide anchored at a frame (ComfyUI MiniMaxH3AddGuide)
             with gr.Accordion("Guide", open=False, elem_id=f"{self.tab}_h3_guide"):
                 gr.Markdown("Anchor a video clip and/or an audio track at a frame of the clip, for example a voice or a "
@@ -95,8 +94,8 @@ class Panel:
     @property
     def inputs(self):
         # the order integration.panel_media unpacks
-        return ([self.output, self.audio, self.audio_shift] + self.ref_audios + self.ref_videos
-                + [self.keep_soundtrack, self.guide_video, self.guide_soundtrack, self.guide_audio, self.guide_frame])
+        return [self.output, self.audio, self.audio_shift, self.ref_media, self.keep_soundtrack, self.guide_video,
+                self.guide_soundtrack, self.guide_audio, self.guide_frame]
 
     @property
     def needed(self):
