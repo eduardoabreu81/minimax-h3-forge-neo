@@ -17,7 +17,7 @@ from backend.state_dict import load_state_dict
 from huggingface_guess import detection, model_list
 from transformers.modeling_utils import no_init_weights
 
-from . import model, release, taeh3, vae
+from . import filebacked, model, release, taeh3, vae
 from .engine import MiniMaxH3Engine
 from .islands import fp32_islands, restore_fp32
 from .text_encoder import Qwen3VL32B
@@ -118,6 +118,17 @@ def _load_vae(state_dict: dict) -> vae.AutoencoderMiniMaxH3:
     return pair
 
 
+def _file_backed(name: str, module, storages: set[int]) -> None:
+    # see filebacked.py: weights that return from VRAM become file views again instead of anonymous copies
+    try:
+        backed, total = filebacked.keep_file_backed(module, storages)
+    except Exception as e:
+        # the model works without it, with Forge's own copies in system RAM
+        logger.warning(f"[MiniMax H3] {name}: weights will be copied to system RAM when they leave VRAM: {e}")
+        return
+    print(f"[MiniMax H3] {name}: {backed / 2**30:.1f} of {total / 2**30:.1f} GiB stay file-backed in system RAM")
+
+
 def _hook_components() -> None:
     original = loader.load_huggingface_component
 
@@ -130,15 +141,20 @@ def _hook_components() -> None:
         if cls_name == "MiniMaxH3Transformer3DModel":
             # the Krea 2 branch is a generic single-stream DiT load: dtype, quantization and device handling
             islands = fp32_islands(state_dict, curve="adaln_t_table" in state_dict)
+            storages = filebacked.file_storages(state_dict)
             with _swapped(krea, "SingleStreamDiT", MiniMaxH3Model):
                 dit = original(guess, component_name, lib_name, "Krea2Transformer2DModel", repo_path, state_dict)
             restore_fp32(dit, islands)
+            _file_backed("diffusion model", dit, storages)
             return dit
         if cls_name == "Qwen3VLModel":
             if not isinstance(state_dict, dict) or len(state_dict) <= 16:
                 raise ValueError(MISSING_TE)
+            storages = filebacked.file_storages(state_dict)
             with _swapped(llama, "Qwen3VL", Qwen3VL32B):
-                return original(guess, component_name, lib_name, cls_name, repo_path, state_dict)
+                text_encoder = original(guess, component_name, lib_name, cls_name, repo_path, state_dict)
+            _file_backed("text encoder", text_encoder, storages)
+            return text_encoder
 
         return original(guess, component_name, lib_name, cls_name, repo_path, state_dict)
 
