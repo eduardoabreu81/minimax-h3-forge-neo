@@ -1,12 +1,36 @@
-# Validation: 0.5.0
+# Validation: 0.6.0
 
-GPU sessions on 2026-10-03, 2026-10-04 and 2026-10-05 (America/Sao_Paulo), CPU tests on 2026-10-05. The published examples, with prompts and settings, are in the wiki's [Examples](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Examples) page; the full measurement tables are in [Performance and Memory](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Performance-and-Memory).
+GPU sessions from 2026-10-03 to 2026-10-06 (America/Sao_Paulo), CPU tests on 2026-10-06. The published examples, with prompts and settings, are in the wiki's [Examples](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Examples) page; the full measurement tables are in [Performance and Memory](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Performance-and-Memory).
 
 ## Environment
 
 One NVIDIA A40 (48 GB) with about 50 GB of system RAM (46.6 GiB container limit), RunPod, three Pods in two regions. Forge Neo `97b26fb` (`neo-2.29.2`), Python 3.13, Torch 2.13 cu130, comfy-kitchen 0.2.36 with its CUDA backend, PyTorch SDPA attention. Standard model set: Comfy-Org pruned INT8 ConvRot DiT, INT8 ConvRot text encoder, fp16 video VAE and fp32 audio VAE (revision `e5eb578`).
 
 Requests went through Forge's API (`/sdapi/v1/txt2img` and `img2img`), which runs the same processing as the Generate button. Times are wall time for the whole request, model loading included when the model was not loaded yet. RAM was sampled once per second.
+
+## 0.6.0: reference pictures, 16 GB cards, ck attention (2026-10-05 and 2026-10-06)
+
+CPU: 107 tests and Ruff pass. New: Ref2VA reference pictures (`references.py`: order, sizes, the 9-picture limit, mode by file name), weights kept file-backed when they leave VRAM (`native/filebacked.py`: file views restored on a move to the CPU, quantized weights recognized by their packed data, casts left to torch), and the comfy-kitchen version check for `--use-ck-attention`.
+
+**Reference pictures (A40, Forge Neo `d70373e`, comfy-kitchen 0.2.37).** W4A8 and INT8 Ref2VA checkpoints, INT4 text encoder, 960×544, 20 steps, pictures made with Krea 2 Turbo in Forge Neo. 0 / 1 / 3 pictures: 185 / 199 / 238 s of sampling; 9 pictures with 141 frames: 416 s, every subject in the clip; INT8 the same speed as W4A8 and practically the same clip; 10 pictures refused with a message; the ref2v turbo LoRA at 4 steps: 36 s, poor sound.
+
+**ck attention (A40).** `--use-ck-attention` with the extension's bypass lifted: no crash with W4A8 (3-10% faster than SDPA, owner: same picture) nor with the INT8 ConvRot checkpoint (10.86 against 11.69 s per step). The bypass is gone; the extension now requires comfy-kitchen 0.2.37 (Forge Neo `d70373e`).
+
+**Last frame (A40).** 124 frames, last frame only, with and without MiniMax's instruction line: the last frame matched the picture in every clip (SSIM 0.80 to 0.90) and the line changed nothing visible. What decided the result was the picture: a vase held in a hand while the prompt grew it on the pipe appeared out of nowhere; an extra person in the picture appeared in the clip; a last frame redrawn by img2img changed the tent. A 22-frame test missed the last frame (the model was trained on about 124 to 362 frames).
+
+**16 GB card (RTX 2000 Ada 16 GB, 31 GB container RAM, EU-RO-1).** h3 preset.
+
+| Files | Options | Clip | Wall | s/step |
+| --- | --- | --- | ---: | ---: |
+| GGUF Q4_K + INT4 | 0.5.0 behaviour | 640×384, 73 frames | CUDA OOM at step 0, then the process killed by the RAM limit | |
+| GGUF Q4_K + INT4 | Never OOM, file-backed weights | 640×384, 73 | 272 s | 9.9 |
+| GGUF Q4_K + INT4 | Never OOM, file-backed weights | 960×544, 124 | 881 s | 38.9 |
+| GGUF Q4_K + INT4 | Never OOM, first frame from Krea 2 | 960×544, 192 | 1608 s | 73.2 |
+| W4A8 + INT4 | Never OOM | 640×384, 73 | 197 s | 8.45 |
+| W4A8 + INT4 | `--cuda-malloc` + Never OOM | 640×384, 73 | 161 s | 7.53 |
+| W4A8 + INT4 | `--cuda-malloc`, no Never OOM | 640×384, 73 | 143 s | 5.69 |
+
+The CUDA OOM was fragmentation: 12.50 GiB allocated and 2.80 GiB reserved but unused after the 14.6 GB text encoder left the card. A DiT forward needs about 0.96 GB above its weights at 640×384×73 frames, within Forge's estimate for H3. Forge's `--cuda-malloc` (cudaMallocAsync) removes it. Without file-backed weights the text encoder's return to system RAM pushed the process over the 31 GB limit; with them the console reports 12.5 of 15.4 GiB (text encoder) and 10.6 of 10.7 GiB (GGUF DiT) staying file-backed, and the Forge process peaked at 28.6 GiB, mostly reclaimable file pages. The official INT8 + INT8 text encoder set (about 50 GiB) does not fit in 32 GB.
 
 ## 0.5.0: smaller files and 24 GB cards (2026-10-05)
 

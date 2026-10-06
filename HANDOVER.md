@@ -1,6 +1,6 @@
 # MiniMax H3 for Forge Neo: handover
 
-Updated: 2026-10-05, America/Sao_Paulo. Version 0.5.0, work in progress. 0.5.0 adds GGUF checkpoints, real format labels and the smaller set for 24 GB cards (Kijai W4A8 + Merserk INT4 text encoder), validated on an A40 and an RTX 4090 the same day. 0.4.0 adds the Audio shift slider, H3's own sparse attention and FastH3's VSA (`native/sparse.py`), madebyollin's temporal taeh3 preview and on-the-fly LoRAs as low-rank terms (`native/lora.py`), all validated on an A40 the same night. H3 runs on a native Forge Neo backend (since 0.2.0). First and last frame, FastH3, community INT8/W4A8 checkpoints, Kijai's INT8 video VAE, the RGB live preview and the early release of a replaced H3 model were validated on an A40 on 2026-10-04. This roadmap describes future work; it does not authorize paid resources.
+Updated: 2026-10-06, America/Sao_Paulo. Version 0.6.0, work in progress. 0.6.0 adds Ref2VA reference pictures (`references.py`), weights that stay file-backed in system RAM when they leave VRAM (`native/filebacked.py`), which brought 16 GB cards with 32 GB of RAM into reach, and `--use-ck-attention` from comfy-kitchen 0.2.37, validated on an A40 and an RTX 2000 Ada 16 GB. 0.5.0 adds GGUF checkpoints, real format labels and the smaller set for 24 GB cards (Kijai W4A8 + Merserk INT4 text encoder), validated on an A40 and an RTX 4090 the same day. 0.4.0 adds the Audio shift slider, H3's own sparse attention and FastH3's VSA (`native/sparse.py`), madebyollin's temporal taeh3 preview and on-the-fly LoRAs as low-rank terms (`native/lora.py`), all validated on an A40 the same night. H3 runs on a native Forge Neo backend (since 0.2.0). First and last frame, FastH3, community INT8/W4A8 checkpoints, Kijai's INT8 video VAE, the RGB live preview and the early release of a replaced H3 model were validated on an A40 on 2026-10-04. This roadmap describes future work; it does not authorize paid resources.
 
 ## Decisions to preserve
 
@@ -19,17 +19,19 @@ Forge Neo loads the H3 checkpoint, text encoder and both VAEs through its own lo
 
 | Evidence | Result |
 | --- | --- |
-| CPU tests | 91 tests: layouts against nine real checkpoint headers, toy forward passes, VAE round trips, keyframe tokens, model release, preview hooks and Forge's generation order replayed with stand-ins |
+| CPU tests | 107 tests: layouts against nine real checkpoint headers, toy forward passes, VAE round trips, keyframe tokens, model release, preview hooks and Forge's generation order replayed with stand-ins |
 | T2V with audio (A40) | Bird 53.5 s; laundromat 196.9 s at Res Multistep 20; neon 15 s 1K 1628 s at 20 steps; bus stop 15 s 840.8 s with the turbo LoRA on the fly |
 | First and last frame (A40) | First, last, both, CFG 3, turbo LoRA, Never OOM; non-H3 pictures at 768p followed with identity and framing |
 | Modes (A40) | Still image, audio off, CFG 3 with a negative prompt, interruption and recovery, clear errors, switching to SD 1.5 and back, RGB live preview, browser UI |
-| Files (A40) | Pruned INT8, w6a8 and fp8 DiTs; FastH3 8-step V2 INT8 (dense attention); Eros Max beta5 INT8 and W4A8; INT8 text encoder; Comfy-Org, original MiniMax and Kijai INT8 video VAEs; Comfy-Org and larryvrh turbo LoRAs |
+| Files (A40) | Pruned INT8, w6a8 and fp8 DiTs; FastH3 8-step V2 INT8 (dense attention); Eros Max beta5 INT8 and W4A8; INT8 text encoder; Comfy-Org, original MiniMax and Kijai INT8 video VAEs; Comfy-Org turbo LoRA (the larryvrh LoRAs do not map: keys without `diffusion_model.`, per-block `adaln_proj`) |
 | Forge features (A40) | Never OOM Integrated (about 22 GB VRAM), Sparse Attention Integrated (33% faster per step on a 33k-token clip), early release of a replaced H3 (switch peak 12.4 GiB instead of 46.3) |
 | Files (0.5.0) | Kijai W4A8, tsolful INT4BQ (acceptable), unsloth GGUF Q4_K, Merserk INT4 text encoder; Merserk INT4 DiT loads but is broken |
 | 24 GB (RTX 4090) | Every tested combo ran 10-second clips up to 960×544 without Never OOM; W4A8 + INT4 fastest, 35 GB RSS |
-| Pending | taeh3 TAESD preview on a GPU; cards under 24 GB and hosts with less RAM |
+| Reference pictures (0.6.0) | 1, 3 and 9 pictures on W4A8 and INT8 Ref2VA checkpoints; 10 refused |
+| 16 GB (0.6.0) | RTX 2000 Ada, 31 GB RAM: GGUF and W4A8 with the INT4 text encoder; W4A8 with `--cuda-malloc` without Never OOM 5.7 s/step at 640×384; 8-second 960×544 clip with Never OOM |
+| Pending | 960×544 on 16 GB without Never OOM; cards under 16 GB; reference video and audio |
 
-Pins: Forge Neo `97b26fb` (GPU tests), ComfyUI `e9027f2` (port source), Comfy-Org/MiniMax-H3 `e5eb578`, MiniMaxAI/MiniMax-H3 `42ed227`. Pod environment: Python 3.13, Torch 2.13 cu130, comfy-kitchen 0.2.36.
+Pins: Forge Neo `d70373e` (minimum since 0.6.0, comfy-kitchen 0.2.37; earlier GPU tests on `97b26fb`), ComfyUI `e9027f2` (port source), Comfy-Org/MiniMax-H3 `e5eb578`, MiniMaxAI/MiniMax-H3 `42ed227`. Pod environment: Python 3.13, Torch 2.13 cu130, comfy-kitchen 0.2.36.
 
 ## Source map
 
@@ -38,6 +40,7 @@ Pins: Forge Neo `97b26fb` (GPU tests), ComfyUI `e9027f2` (port source), Comfy-Or
 | `scripts/forge_h3.py` | Entry point: compatibility check, patches, script callbacks, settings |
 | `forge_h3/integration.py` | The H3 request through Forge's script callbacks: validation, Frames, keyframes, packed noise, MP4 |
 | `forge_h3/keyframes.py` | Last frame from the ImageStitch Integrated gallery |
+| `forge_h3/references.py` | Ref2VA reference pictures from img2img and ImageStitch Integrated |
 | `forge_h3/ui.py`, `ui_state.py` | H3 panel and native control adaptation/restoration |
 | `forge_h3/contracts.py` | Request, frame and size rules; pending errors |
 | `forge_h3/models.py` | Header inspection and component resolution, before Forge loads anything |
@@ -53,6 +56,7 @@ Pins: Forge Neo `97b26fb` (GPU tests), ComfyUI `e9027f2` (port source), Comfy-Or
 | `forge_h3/native/sparse.py` | H3 sparse attention and FastH3 VSA on comfy-kitchen's sol_attn |
 | `forge_h3/native/lora.py` | On-the-fly LoRAs as low-rank terms on INT8 layers |
 | `forge_h3/native/release.py` | Early release of a replaced H3 model |
+| `forge_h3/native/filebacked.py` | Weights back to their file views when they leave VRAM |
 | `forge_h3/native/taeh3.py` | taeh3 preview decoder for Forge's TAESD live preview |
 | `tests/` | CPU tests; `forge_stubs.py` stands in for Forge Neo |
 
@@ -64,13 +68,13 @@ A low-resolution draft, then `MinimaxH3LatentUpscaler3D` (LBH-123-AI, MIT, a 3D 
 
 ### 2. Speed
 
-- Check comfy-kitchen's `int8_attention` with the H3 INT8 checkpoints (an earlier INT8 attention crashed with them, ComfyUI #15529).
+- ck attention runs on comfy-kitchen 0.2.37, now the minimum (Forge Neo `d70373e`); W4A8 and INT8 checked.
 - On-the-fly LoRA still costs ~10% per step; merged costs nothing.
 
 ### 3. Memory
 
 - Load the text encoder only to encode the prompt. Forge loads checkpoint, text encoder and VAEs together, about 50 GiB (DiT 19.5, text encoder 25.3, VAEs 5.4); 15-second clips peak at 46.3 GiB. Releasing the text encoder after encoding helps while sampling but not the load peak. Measure with limited RAM on the Pod first.
-- 24 GB cards are validated (0.5.0). Next: 16 and 12 GB with GGUF checkpoints and Never OOM.
+- 24 GB (0.5.0) and 16 GB with 32 GB of RAM (0.6.0) are validated. Next: 960×544 on 16 GB without Never OOM, then 12 GB. The file-backed weights could serve any large model in a separate extension or upstream.
 - A separate extension that releases replaced models early for any architecture (Wan 2.2 A14B, Flux, Qwen-Image).
 
 ### 4. More files

@@ -3,7 +3,7 @@
 <div align="center">
 
 [![Forge Neo](https://img.shields.io/badge/Forge-Neo-blue)](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)
-[![Version](https://img.shields.io/badge/Version-0.5.0-brightgreen)](https://github.com/eduardoabreu81/minimax-h3-forge-neo)
+[![Version](https://img.shields.io/badge/Version-0.6.0-brightgreen)](https://github.com/eduardoabreu81/minimax-h3-forge-neo)
 ![Status](https://img.shields.io/badge/Status-Work_in_progress-orange)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-green)](LICENSE)
 
@@ -11,12 +11,20 @@
 
 </div>
 
-Generate **videos with sound** with **[MiniMax H3](https://github.com/MiniMax-AI/MiniMax-H3)** inside Forge Neo, using the checkpoint, preset and Generate button you already know - describe the scene and its sounds, or start from a picture, and get an MP4 with picture and audio made together.
+Generate **videos with sound** with **[MiniMax H3](https://github.com/MiniMax-AI/MiniMax-H3)** inside Forge Neo, using the checkpoint, preset and Generate button you already know - describe the scene and its sounds, start from a picture, or give it pictures of the people and things to show, and get an MP4 with picture and audio made together.
+
+<div align="center">
+
+[![A grey wizard on a stone bridge raises his staff and roars: You shall run on sixteen gigabytes of VRAM on Forge Neo](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/gandalf-16gb.gif)](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/gandalf-16gb.mp4)
+
+*"You shall run... on sixteen gigabytes of VRAM... on Forge Neo!"* - made by this extension on a **16 GB card with 32 GB of RAM** (first frame from Krea 2, 8 seconds with sound). Click for the MP4.
+
+</div>
 
 > [!Important]
-> **Work in progress.** Text-to-video with sound and first/last frame work, and were tested on a 48 GB GPU and on a 24 GB RTX 4090. H3 is a very large model: with the [smaller files](#-installation) a 24 GB card needs about 48 GB of system RAM. Cards under 24 GB have not been tested yet.
+> **Work in progress.** Text-to-video with sound, first/last frame and reference pictures work. Tested on a 48 GB A40, a 24 GB RTX 4090 and a 16 GB RTX 2000 Ada with 32 GB of system RAM, using the [smaller files](#-installation). Cards under 16 GB have not been tested yet.
 >
-> This extension requires an up-to-date **Forge Neo** (the `neo` branch, updated on or after 2 October 2026). On an older version it stays disabled and tells you so in the console - Forge Neo itself keeps working as usual.
+> This extension requires an up-to-date **Forge Neo** (the `neo` branch, revision `d70373e` of 3 October 2026 or later, with comfy-kitchen 0.2.37). On an older version it stays disabled and tells you so in the console - Forge Neo itself keeps working as usual.
 
 ---
 
@@ -33,6 +41,13 @@ Generate **videos with sound** with **[MiniMax H3](https://github.com/MiniMax-AI
 ---
 
 ## 🆕 What's New
+
+### v0.6.0 - Reference Pictures and 16 GB Cards
+
+- **Reference pictures (Ref2VA)** - up to 9 pictures of people, places and objects, kept in a new scene, with a Ref2VA checkpoint and Forge's **ImageStitch Integrated**
+- **16 GB cards with 32 GB of RAM** - weights that leave VRAM point back to their file on disk instead of being copied into system RAM, so H3's 15 GB text encoder no longer runs a 32 GB machine out of memory
+- **`--use-ck-attention`** - Forge Neo's INT8 attention now runs H3 (comfy-kitchen 0.2.37 or later), 3-10% faster
+- **Writing prompts** - MiniMax's prompt layouts, the instruction lines for first and last frame and the reference format, on a [new wiki page](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Writing-Prompts)
 
 ### v0.5.0 - Smaller Files and 24 GB Cards
 
@@ -115,6 +130,13 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 - Use both in img2img for a video that goes from one picture to the other; in txt2img the gallery image is the ending
 - Works the same way as Wan 2.2 in Forge Neo
 
+### 🧩 Reference Pictures (Ref2VA)
+
+- Up to **9 pictures** of people, places and objects, kept in a new scene - a face, a workshop, a pocket watch, a cat
+- Select a **Ref2VA** checkpoint and add the pictures to **ImageStitch Integrated**; in img2img the input image is the first one
+- Pictures of any proportions, in the order the prompt numbers them (`<Picture 1>`, `<Picture 2>`...)
+- Prompts in MiniMax's [full-reference format](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Reference-Pictures#writing-the-prompt), with lines in any language
+
 ### 🎛️ Familiar Forge Controls
 
 - Runs inside txt2img and img2img - no separate tab, no extra program
@@ -165,7 +187,7 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 | Audio VAE | [minimax_h3_audio_vae_fp32](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/e5eb578a89295337b8ff433a035929ce0279e0b6/vae/minimax_h3_audio_vae_fp32.safetensors) | `models/VAE` |
 | Turbo LoRA (optional) | [minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/e5eb578a89295337b8ff433a035929ce0279e0b6/loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors) | `models/Lora` |
 
-**For a 24 GB card**, or to use less system RAM, swap the checkpoint and the text encoder for these smaller files (same folders, same VAEs):
+**For a 24 GB or 16 GB card**, or to use less system RAM, swap the checkpoint and the text encoder for these smaller files (same folders, same VAEs):
 
 | Part | File | Size |
 | :--- | :--- | :--- |
@@ -175,8 +197,11 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 6. Make sure **FFmpeg** is installed (or set its path in **Settings** → **MiniMax H3**)
 7. Pick the **h3** UI preset, the checkpoint, and **all three** of the text encoder, the video VAE and the audio VAE under **VAE / Text Encoder**
 
+> [!Tip]
+> **On a 16 GB card**, start Forge Neo with **`--cuda-malloc`** (for example in `webui-user.bat`). Without it, the memory left behind by the text encoder is too fragmented for the checkpoint and the first step runs out of VRAM. With it, the smaller set ran a 3-second 640×384 clip without Never OOM; for longer or larger clips turn on **Never OOM Integrated**. See the [16 GB page](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/16-GB-Cards).
+
 > [!Note]
-> H3 is a large model and Forge keeps its files in system RAM. On a 24 GB RTX 4090, Forge used about **35 GB of RAM** with the smaller set and about **67 GB** with the INT8 checkpoint and the INT4 text encoder; on a 48 GB card the INT8 set peaked at about 46 GiB. Other files that work - FastH3, GGUF checkpoints, Kijai's INT8 video VAE, community checkpoints - and the measurements are in the **[Models](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Models)** and **[Performance and Memory](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Performance-and-Memory)** pages.
+> H3 is a large model and Forge keeps its files in system RAM. With the smaller set, a 16 GB card ran with **32 GB of RAM**; on a 24 GB RTX 4090, Forge used about **35 GB of RAM** with the smaller set and about **67 GB** with the INT8 checkpoint and the INT4 text encoder; on a 48 GB card the INT8 set peaked at about 46 GiB. Other files that work - FastH3, GGUF checkpoints, Kijai's INT8 video VAE, community checkpoints - and the measurements are in the **[Models](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Models)** and **[Performance and Memory](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Performance-and-Memory)** pages.
 
 ---
 
@@ -225,6 +250,8 @@ With the default range, a person or object turning on itself may "morph" instead
 - For several events, put them in order, give timings for long clips, and leave time for the last one
 - At CFG 1 the negative prompt is not used - say what you do not want in the prompt itself
 - From a picture, describe the motion and the sound, not what the picture already shows
+- With first or last frame, start the prompt with the model's instruction line, which says where each picture sits in the clip - the lines are in the wiki's [Writing Prompts](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Writing-Prompts)
+- With reference pictures, say in the prompt what each one should keep - face, hair, clothes, the shape of an object - and keep `ref2va` in the checkpoint's file name, which is how the extension recognizes it
 - For first and last frame, use pictures with the same proportions as the video; the last frame is cropped to the video size
 - With a turbo LoRA on long clips, set **Diffusion in Low Bits** to **Automatic (fp16 LoRA)** to save system RAM; on shorter clips the default **Automatic** is slightly faster
 - For a sharp live preview, set **Live Preview Method** to **TAESD** in Forge's settings - the preview decoder downloads by itself
@@ -241,13 +268,14 @@ With the default range, a person or object turning on itself may "morph" instead
 - **[Forge Neo](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)** by Haoming02
 - **[MiniMax H3](https://github.com/MiniMax-AI/MiniMax-H3)** by MiniMax
 - **[ComfyUI](https://github.com/Comfy-Org/ComfyUI)** - reference implementation of the model
-- **[Comfy-Org](https://huggingface.co/Comfy-Org/MiniMax-H3)** - the model files and the turbo LoRA
+- **[Comfy-Org](https://huggingface.co/Comfy-Org/MiniMax-H3)** - the model files and the turbo LoRAs
 - **[FastVideo](https://huggingface.co/FastVideo/FastVideo-FastH3-8-Step-V2)** - FastH3
-- **[Kijai](https://huggingface.co/Kijai)** - the INT8 video VAE and the W4A8 checkpoint
+- **[Kijai](https://huggingface.co/Kijai)** - the INT8 video VAE and the W4A8 checkpoints
 - **[Merserk](https://huggingface.co/Merserk/MiniMax-H3-INT4-ConvRot)** - the INT4 text encoder
 - **[unsloth](https://huggingface.co/unsloth/MiniMax-H3-GGUF)** - GGUF checkpoints
 - **[madebyollin](https://github.com/madebyollin/taehv)** - the taeh3 live preview decoder
-- **[larryvrh](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora)** and **[lightx2v](https://github.com/ModelTC/Minimax-H3-Turbo)** - turbo LoRAs and settings
+- **[lightx2v](https://github.com/ModelTC/Minimax-H3-Turbo)** - turbo LoRA settings
+- **[Krea 2](https://huggingface.co/Comfy-Org/Krea-2)** - the reference pictures in the examples were made with Krea 2 Turbo in Forge Neo
 
 ---
 
