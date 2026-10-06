@@ -268,8 +268,27 @@ class RequestTests(unittest.TestCase):
         with self.assertRaisesRegex(H3Error, "up to 3 reference audio"):
             GenerationRequest(mode="ref2va", reference_audios=4)
 
+    def test_reference_videos_and_the_twelve_file_limit(self):
+        self.assertEqual(GenerationRequest(mode="ref2va", reference_videos=3).reference_videos, 3)
+        with self.assertRaisesRegex(H3Error, "Reference videos need a Ref2VA checkpoint"):
+            GenerationRequest(reference_videos=1)
+        with self.assertRaisesRegex(H3Error, "up to 3 reference videos"):
+            GenerationRequest(mode="ref2va", reference_videos=4)
+        GenerationRequest(mode="ref2va", references=6, reference_videos=3, reference_audios=3)
+        with self.assertRaisesRegex(H3Error, "up to 12 reference files in all; 13 were given"):
+            GenerationRequest(mode="ref2va", references=7, reference_videos=3, reference_audios=3)
+
 
 class ReferenceTests(unittest.TestCase):
+    def test_reference_video_canvas_follows_comfyui(self):
+        from forge_h3.references import adapt_canvas, grid_frames, video_canvas
+        self.assertEqual(adapt_canvas(1920, 1080), (1344, 768))   # 768 short edge, 768 x 1344 cap
+        self.assertEqual(adapt_canvas(1080, 1920), (768, 1344))
+        self.assertEqual(adapt_canvas(1000, 1000), (768, 768))
+        self.assertEqual(video_canvas(640, 360), (640, 352))      # smaller videos are not enlarged
+        self.assertEqual(video_canvas(3840, 2160), (1344, 768))
+        self.assertEqual([grid_frames(n) for n in (4, 5, 21, 22, 72, 362)], [0, 5, 5, 22, 56, 362])
+
     def test_reference_audio_follows_minimax_limits(self):
         from unittest import mock
 

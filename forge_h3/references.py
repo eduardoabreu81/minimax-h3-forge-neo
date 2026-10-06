@@ -3,11 +3,13 @@
 As the Qwen-Image 2.1 extension does: in img2img the input image is <Picture 1> and the gallery of Forge Neo's built-in
 ImageStitch Integrated holds the next ones, in order; in txt2img the gallery holds them all. Each picture keeps its
 aspect ratio and is scaled down (never up) to the clip's pixel area with its sides rounded to 32, as ComfyUI's
-MiniMaxH3ReferenceToVideo does with ref_image_size "match". Reference audio clips come from the H3 panel's own audio
-inputs, as <Audio 1>, <Audio 2>... after the pictures.
+MiniMaxH3ReferenceToVideo does with ref_image_size "match". Reference videos and audio clips come from the H3 panel's
+own inputs. The prompt numbers each kind on its own, in ComfyUI's order: pictures, then videos (a kept soundtrack is
+the <Audio j> right before its <Video k>), then the audio clips.
 """
 
 import math
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -15,16 +17,58 @@ from PIL import Image
 
 from . import keyframes
 from .contracts import (
+    FRAME_STEP,
     MAX_REF_AUDIO_SECONDS,
     MAX_REF_AUDIOS,
+    MAX_REF_VIDEO_SECONDS,
+    MAX_REF_VIDEOS,
     MAX_REFERENCES,
+    MIN_FRAMES,
     MIN_REF_AUDIO_SECONDS,
+    MIN_REF_VIDEO_SECONDS,
     SAMPLE_RATE,
     H3Error,
 )
-from .media import read_audio
+from .media import probe_video, read_audio, read_video
 
 CANVAS_MULTIPLE = 32
+# ComfyUI adapt_canvas: reference videos go to a 768 short edge, at most 768 x 1344 pixels
+BASE_SHORT_EDGE = 768
+MAX_CANVAS_PIXELS = 768 * 1344
+
+
+@dataclass
+class ReferenceVideo:
+    """A reference video at H3's 24 FPS on its canvas, uint8 [frames, height, width, 3] with 17n + 5 frames, and its
+    soundtrack as stereo [2, samples] at 32 kHz when it is kept."""
+    frames: np.ndarray
+    soundtrack: np.ndarray | None = None
+
+
+def adapt_canvas(width: int, height: int) -> tuple[int, int]:
+    """ComfyUI adapt_canvas: a 768 short edge with a 768 x 1344 area cap, each side rounded to 32."""
+    ratio = width / height
+    nom_w, nom_h = (BASE_SHORT_EDGE * ratio, BASE_SHORT_EDGE) if ratio >= 1.0 else (BASE_SHORT_EDGE, BASE_SHORT_EDGE / ratio)
+    if nom_w * nom_h > MAX_CANVAS_PIXELS:
+        scale = math.sqrt(MAX_CANVAS_PIXELS / (nom_w * nom_h))
+        nom_w, nom_h = nom_w * scale, nom_h * scale
+    return (max(CANVAS_MULTIPLE, round(nom_w / CANVAS_MULTIPLE) * CANVAS_MULTIPLE),
+            max(CANVAS_MULTIPLE, round(nom_h / CANVAS_MULTIPLE) * CANVAS_MULTIPLE))
+
+
+def video_canvas(width: int, height: int) -> tuple[int, int]:
+    """The canvas a reference video is read at: adapt_canvas, or its own size rounded to 32 when that is smaller
+    (never enlarged), as MiniMaxH3ReferenceToVideo does."""
+    canvas_w, canvas_h = adapt_canvas(width, height)
+    if width * height < canvas_w * canvas_h:
+        return (max(CANVAS_MULTIPLE, round(width / CANVAS_MULTIPLE) * CANVAS_MULTIPLE),
+                max(CANVAS_MULTIPLE, round(height / CANVAS_MULTIPLE) * CANVAS_MULTIPLE))
+    return canvas_w, canvas_h
+
+
+def grid_frames(count: int) -> int:
+    """The largest 17n + 5 frame count up to count; 0 below 5 frames."""
+    return 0 if count < MIN_FRAMES else count - (count - MIN_FRAMES) % FRAME_STEP
 
 
 def reference_size(width: int, height: int, clip_width: int, clip_height: int) -> tuple[int, int]:
@@ -61,6 +105,32 @@ def collect_audios(paths, ffmpeg="") -> list[np.ndarray]:
     if total > MAX_REF_AUDIO_SECONDS:
         raise H3Error(f"H3 reference audio may last {MAX_REF_AUDIO_SECONDS:g} seconds in all; these last {total:.1f}.")
     return clips
+
+
+def collect_videos(paths, clip_frames: int, keep_soundtrack=True, ffmpeg="") -> list[ReferenceVideo]:
+    """The reference videos of a request, in <Video k> order; the empty slots of the panel are skipped. MiniMax's
+    limits: up to 3 videos, each 2 to 15 seconds, 15 seconds in all. As in ComfyUI, a video longer than the clip keeps
+    its first clip_frames frames (then 17n + 5 of them) and its whole soundtrack."""
+    paths = [path for path in paths or () if path]
+    if len(paths) > MAX_REF_VIDEOS:
+        raise H3Error(f"H3 Ref2VA takes up to {MAX_REF_VIDEOS} reference videos; {len(paths)} were given.")
+    infos = [probe_video(path, ffmpeg) for path in paths]
+    for path, info in zip(paths, infos):
+        if not MIN_REF_VIDEO_SECONDS <= info.seconds <= MAX_REF_VIDEO_SECONDS:
+            raise H3Error(f"H3 reference videos must last {MIN_REF_VIDEO_SECONDS:g} to {MAX_REF_VIDEO_SECONDS:g} "
+                          f"seconds; {Path(path).name} lasts {info.seconds:.1f}.")
+    total = sum(info.seconds for info in infos)
+    if total > MAX_REF_VIDEO_SECONDS:
+        raise H3Error(f"H3 reference videos may last {MAX_REF_VIDEO_SECONDS:g} seconds in all; these last {total:.1f}.")
+    videos = []
+    for path, info in zip(paths, infos):
+        frames = read_video(path, *video_canvas(info.width, info.height), clip_frames, ffmpeg)
+        count = grid_frames(len(frames))
+        if not count:
+            raise H3Error(f"{Path(path).name} gave {len(frames)} frames; an H3 reference video needs at least {MIN_FRAMES}.")
+        soundtrack = read_audio(path, ffmpeg) if keep_soundtrack and info.has_audio else None
+        videos.append(ReferenceVideo(frames[:count], soundtrack))
+    return videos
 
 
 def prepare(image, clip_width: int, clip_height: int):

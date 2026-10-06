@@ -1,10 +1,12 @@
 """Atomic local exports using Forge's FFmpeg or imageio's bundled executable."""
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 import wave
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -50,6 +52,56 @@ def read_audio(path, ffmpeg=""):
     if not samples.size:
         raise H3Error(f"{name} has no audio.")
     return np.clip(samples.reshape(-1, 2).T, -1.0, 1.0).copy()
+
+
+@dataclass(frozen=True)
+class VideoInfo:
+    width: int
+    height: int
+    seconds: float
+    has_audio: bool
+
+
+def probe_video(path, ffmpeg="") -> VideoInfo:
+    """Size (as FFmpeg decodes it, phone rotation applied), duration and sound of a video, from FFmpeg's own report;
+    imageio's bundled FFmpeg comes without ffprobe."""
+    name = Path(path).name
+    try:
+        result = subprocess.run([find_ffmpeg(ffmpeg), "-hide_banner", "-nostdin", "-i", str(path)],
+                                capture_output=True, check=False)
+    except OSError as exc:
+        raise H3Error(f"FFmpeg could not start to read {name}: {exc}") from None
+    report = result.stderr.decode("utf-8", "replace")
+    size = re.search(r"Stream #\S+.*?: Video: .*?(\d{2,5})x(\d{2,5})", report)
+    duration = re.search(r"Duration: (\d+):(\d+):(\d+(?:\.\d+)?)", report)
+    if size is None or duration is None:
+        raise H3Error(f"FFmpeg found no video in {name}.")
+    width, height = int(size.group(1)), int(size.group(2))
+    rotation = re.search(r"rotation of (-?\d+(?:\.\d+)?) degrees", report)
+    if rotation and round(abs(float(rotation.group(1)))) % 180 == 90:
+        width, height = height, width
+    hours, minutes, seconds = duration.groups()
+    return VideoInfo(width, height, int(hours) * 3600 + int(minutes) * 60 + float(seconds),
+                     re.search(r"Stream #\S+.*?: Audio:", report) is not None)
+
+
+def read_video(path, width, height, max_frames, ffmpeg=""):
+    """The frames of a video at H3's 24 FPS, scaled to width x height, as uint8 [frames, height, width, 3] (at most
+    max_frames from the start)."""
+    command = [find_ffmpeg(ffmpeg), "-v", "error", "-nostdin", "-i", str(path), "-an",
+               "-vf", f"fps={FPS},scale={width}:{height}:flags=lanczos", "-frames:v", str(int(max_frames)),
+               "-pix_fmt", "rgb24", "-f", "rawvideo", "-"]
+    name = Path(path).name
+    try:
+        result = subprocess.run(command, capture_output=True, check=False)
+    except OSError as exc:
+        raise H3Error(f"FFmpeg could not start to read {name}: {exc}") from None
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", "replace").strip().splitlines()
+        raise H3Error(f"FFmpeg could not read the frames of {name}: {detail[-1] if detail else 'unknown error'}")
+    frame = width * height * 3
+    count = len(result.stdout) // frame
+    return np.frombuffer(result.stdout[:count * frame], dtype=np.uint8).reshape(count, height, width, 3)
 
 
 def _write_wave(audio, path, samples):

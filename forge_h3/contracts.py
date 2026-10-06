@@ -21,6 +21,11 @@ MAX_REFERENCES = 9
 MAX_REF_AUDIOS = 3
 MIN_REF_AUDIO_SECONDS = 2.0
 MAX_REF_AUDIO_SECONDS = 15.0
+# reference videos: up to 3, each 2-15 seconds, 15 seconds in all; at most 12 reference files of every kind together
+MAX_REF_VIDEOS = 3
+MIN_REF_VIDEO_SECONDS = 2.0
+MAX_REF_VIDEO_SECONDS = 15.0
+MAX_REF_FILES = 12
 
 
 class H3Error(RuntimeError):
@@ -75,6 +80,7 @@ class GenerationRequest:
     mode: str = "fl2va"
     references: int = 0
     reference_audios: int = 0
+    reference_videos: int = 0
 
     def __post_init__(self):
         if self.output not in ("Video", "Still image"):
@@ -88,12 +94,20 @@ class GenerationRequest:
             raise H3Error("Reference pictures need a Ref2VA checkpoint.")
         if self.mode == "fl2va" and self.reference_audios:
             raise H3Error("Reference audio needs a Ref2VA checkpoint.")
+        if self.mode == "fl2va" and self.reference_videos:
+            raise H3Error("Reference videos need a Ref2VA checkpoint.")
         self.references = integer(self.references, "References")
         if not 0 <= self.references <= MAX_REFERENCES:
             raise H3Error(f"H3 Ref2VA takes up to {MAX_REFERENCES} reference pictures.")
         self.reference_audios = integer(self.reference_audios, "Reference audios")
         if not 0 <= self.reference_audios <= MAX_REF_AUDIOS:
             raise H3Error(f"H3 Ref2VA takes up to {MAX_REF_AUDIOS} reference audio clips.")
+        self.reference_videos = integer(self.reference_videos, "Reference videos")
+        if not 0 <= self.reference_videos <= MAX_REF_VIDEOS:
+            raise H3Error(f"H3 Ref2VA takes up to {MAX_REF_VIDEOS} reference videos.")
+        files = self.references + self.reference_audios + self.reference_videos
+        if files > MAX_REF_FILES:
+            raise H3Error(f"H3 Ref2VA takes up to {MAX_REF_FILES} reference files in all; {files} were given.")
         if self.output == "Still image" and self.keyframes:
             raise H3Error("H3 Still image does not take a first or last frame yet. Choose Video, or turn off "
                           "ImageStitch Integrated.")

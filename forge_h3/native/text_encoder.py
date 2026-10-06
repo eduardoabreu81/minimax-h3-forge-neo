@@ -4,18 +4,50 @@ The H3 checkpoint is truncated to the first 50 of 64 layers and consumed as the 
 layer 50: no final norm and no lm_head (ComfyUI comfy/text_encoders/llama.py Qwen3VL_32BConfig). Forge Neo's Qwen3VL
 is pinned to the 4B config (Krea 2), so this subclass builds the size from the config. With images it also runs what
 Forge Neo's Qwen3VL leaves out, interleaved M-RoPE and the DeepStack visual features (from the Qwen-Image 2.1
-extension, where the same Qwen3-VL family is used at 8B).
+extension, where the same Qwen3-VL family is used at 8B). Ref2VA reference videos reach it as two-frame vision blocks
+(ComfyUI comfy/text_encoders/minimax.py process_video_block).
 """
 
+import math
 from dataclasses import asdict, dataclass
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from backend.nn.llm import llama
 from backend.nn.llm.llama import Llama2_, Qwen3VL, Qwen3VL_4BConfig
 from backend.nn.llm.qwen35 import QWEN3VL_VISION, Qwen3VLVisionModel
 
 VISION_KEYS = ("hidden_size", "intermediate_size", "depth", "num_heads", "num_position_embeddings", "deepstack_visual_indexes")
+# Forge Neo's Qwen3VL image normalization
+QWEN_IMAGE_MEAN = (0.5, 0.5, 0.5)
+QWEN_IMAGE_STD = (0.5, 0.5, 0.5)
+
+
+def process_video_block(frames: torch.Tensor, patch_size=16, temporal_patch_size=2, merge_size=2, min_pixels=3136,
+                        max_pixels=12845056) -> tuple[torch.Tensor, torch.Tensor]:
+    """A [2, H, W, 3] frame pair in [0, 1] -> (flatten_patches, grid_thw) with grid_t = 1: the resize and
+    normalization of an image, but the two frames fill the temporal patch instead of one frame repeated."""
+    _, height, width, _ = frames.shape
+    factor = patch_size * merge_size
+    h_bar, w_bar = round(height / factor) * factor, round(width / factor) * factor
+    if h_bar * w_bar > max_pixels:
+        beta = math.sqrt((height * width) / max_pixels)
+        h_bar = max(factor, math.floor(height / beta / factor) * factor)
+        w_bar = max(factor, math.floor(width / beta / factor) * factor)
+    elif h_bar * w_bar < min_pixels:
+        beta = math.sqrt(min_pixels / (height * width))
+        h_bar, w_bar = math.ceil(height * beta / factor) * factor, math.ceil(width * beta / factor) * factor
+    images = F.interpolate(frames.permute(0, 3, 1, 2).float(), size=(h_bar, w_bar), mode="bilinear", align_corners=False)
+    mean = torch.tensor(QWEN_IMAGE_MEAN, device=images.device).view(1, 3, 1, 1)
+    std = torch.tensor(QWEN_IMAGE_STD, device=images.device).view(1, 3, 1, 1)
+    images = (images - mean) / std
+    grid_h, grid_w = h_bar // patch_size, w_bar // patch_size
+    patches = images.reshape(1, temporal_patch_size, 3, grid_h // merge_size, merge_size, patch_size,
+                             grid_w // merge_size, merge_size, patch_size)
+    patches = patches.permute(0, 3, 6, 4, 7, 2, 1, 5, 8)
+    flatten = patches.reshape(grid_h * grid_w, 3 * temporal_patch_size * patch_size * patch_size)
+    return flatten, torch.tensor([[1, grid_h, grid_w]], device=frames.device, dtype=torch.long)
 
 
 @dataclass
@@ -75,6 +107,14 @@ class Qwen3VL32B(Qwen3VL):
             if key in config_dict.get("vision_config", {}):
                 vision_config[key] = config_dict["vision_config"][key]
         self.visual = Qwen3VLVisionModel(vision_config)
+
+    def preprocess_embed(self, embed, device):
+        # a reference video's two-frame block; pictures take Forge Neo's own path
+        if embed["type"] == "image" and embed.get("minimax_video_block", False):
+            flatten, grid = process_video_block(embed["data"])
+            merged, deepstack = self.visual(flatten.to(device, dtype=torch.float32), grid)
+            return merged, {"grid": grid, "deepstack": deepstack}
+        return super().preprocess_embed(embed, device)
 
     def forward(self, x, attention_mask=None, embeds=None, num_tokens=None, intermediate_output=None, final_layer_norm_intermediate=True, dtype=None, embeds_info=[]):
         position_ids, visual_mask, deepstack = (None, None, None) if embeds is None else self.build_image_inputs(embeds, embeds_info)

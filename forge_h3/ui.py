@@ -5,7 +5,14 @@ import logging
 
 import gradio as gr
 
-from .contracts import AUDIO_SHIFT, DEFAULT_FRAMES, FPS, MAX_REF_AUDIOS, H3Error
+from .contracts import (
+    AUDIO_SHIFT,
+    DEFAULT_FRAMES,
+    FPS,
+    MAX_REF_AUDIOS,
+    MAX_REF_VIDEOS,
+    H3Error,
+)
 from .integration import checkpoint_info
 from .models import ROLE_LABELS, inspect_model
 from .ui_state import frame_view, preset_frame_view
@@ -54,13 +61,18 @@ class Panel:
                 gr.Markdown("With an FL2VA checkpoint, one image in the **ImageStitch Integrated** gallery is the **last "
                             "frame** (img2img gives the first). With a **Ref2VA** checkpoint the gallery holds up to 9 "
                             "reference pictures, `<Picture 1>`, `<Picture 2>`... in order.")
-            # Ref2VA only: the H3 panel's own audio inputs, as ImageStitch Integrated takes pictures only
-            with gr.Accordion("Reference audio", open=False, visible=False,
-                              elem_id=f"{self.tab}_h3_reference_audio") as self.reference_audio:
-                gr.Markdown("Up to 3 clips, each 2 to 15 seconds, 15 seconds in all. Name them in the prompt as "
-                            "`<Audio 1>`, `<Audio 2>`... (a voice to reuse, a song, a sound).")
-                self.ref_audios = [gr.Audio(sources=["upload"], type="filepath", label=f"<Audio {i + 1}>",
-                                            elem_id=f"{self.tab}_h3_ref_audio_{i + 1}") for i in range(MAX_REF_AUDIOS)]
+            # Ref2VA only: the H3 panel's own video and audio inputs, as ImageStitch Integrated takes pictures only
+            with gr.Accordion("Reference video and audio", open=False, visible=False,
+                              elem_id=f"{self.tab}_h3_reference_media") as self.reference_media:
+                gr.Markdown("Up to 3 videos and 3 audio clips, each 2 to 15 seconds, 15 seconds in all per kind. In the "
+                            "prompt, videos are `<Video 1>`, `<Video 2>`...; `<Audio j>` counts the kept video "
+                            "soundtracks first, then the clips. A video longer than the clip keeps its first part.")
+                self.ref_videos = [gr.Video(sources=["upload"], label=f"Video {k + 1}",
+                                            elem_id=f"{self.tab}_h3_ref_video_{k + 1}") for k in range(MAX_REF_VIDEOS)]
+                self.keep_soundtrack = gr.Checkbox(value=True, label="Use each video's soundtrack",
+                                                   elem_id=f"{self.tab}_h3_keep_soundtrack")
+                self.ref_audios = [gr.Audio(sources=["upload"], type="filepath", label=f"Audio clip {j + 1}",
+                                            elem_id=f"{self.tab}_h3_ref_audio_{j + 1}") for j in range(MAX_REF_AUDIOS)]
             self.status = gr.Markdown("Select the H3 text encoder, video VAE and audio VAE in VAE / Text Encoder.")
             with gr.Accordion("Components", open=False):
                 self.summary = gr.Markdown("")
@@ -70,7 +82,8 @@ class Panel:
 
     @property
     def inputs(self):
-        return [self.output, self.audio, self.audio_shift] + self.ref_audios
+        # the order Script.before_process unpacks
+        return [self.output, self.audio, self.audio_shift] + self.ref_audios + self.ref_videos + [self.keep_soundtrack]
 
     @property
     def needed(self):
@@ -99,7 +112,7 @@ class Panel:
         preset_input = [preset] if preset is not None else []
         inputs = [checkpoint, self.output, modules, self.saved] + native + preset_input
         outputs = ([self.accordion, self.audio, self.audio_shift, duration, self.status, self.summary, self.saved,
-                    self.reference_audio] + native + preset_input)
+                    self.reference_media] + native + preset_input)
 
         def update(value, output, module_values, saved, *values):
             preset_value = values[-1] if preset is not None else None

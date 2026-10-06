@@ -10,7 +10,13 @@ import numpy as np
 from PIL import Image
 
 from forge_h3.contracts import H3Error
-from forge_h3.media import export_still, export_video, read_audio
+from forge_h3.media import (
+    export_still,
+    export_video,
+    probe_video,
+    read_audio,
+    read_video,
+)
 
 
 @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg/FFprobe required")
@@ -90,6 +96,29 @@ class ReadAudioTests(unittest.TestCase):
         self.assertAlmostEqual(audio.shape[1] / 32000, 2.5, places=2)
         self.assertTrue(np.array_equal(audio[0], audio[1]))
         self.assertAlmostEqual(float(np.abs(audio).max()), 0.5, places=2)
+
+    def test_video_is_probed_and_read_at_24_fps(self):
+        path = self.root / "clip.mp4"
+        subprocess.run([shutil.which("ffmpeg"), "-v", "error", "-f", "lavfi", "-i", "testsrc=size=160x90:rate=30:duration=2.5",
+                        "-f", "lavfi", "-i", "sine=duration=2.5", "-shortest", "-pix_fmt", "yuv420p", str(path)], check=True)
+        info = probe_video(path)
+        self.assertEqual((info.width, info.height, info.has_audio), (160, 90, True))
+        self.assertAlmostEqual(info.seconds, 2.5, places=1)
+        frames = read_video(path, 64, 32, 22)
+        self.assertEqual((frames.dtype, frames.shape), (np.uint8, (22, 32, 64, 3)))
+        self.assertEqual(read_video(path, 64, 32, 999).shape[0], 60)
+        self.assertEqual(read_audio(path).shape[0], 2)
+
+    def test_phone_rotation_swaps_the_size(self):
+        from unittest import mock
+        report = ("  Duration: 00:00:04.20, start: 0.000000, bitrate: 1 kb/s\n"
+                  "  Stream #0:0[0x1](und): Video: h264 (High), yuv420p(tv), 1920x1080, 30 fps\n"
+                  "      Side data:\n        displaymatrix: rotation of -90.00 degrees\n")
+        result = subprocess.CompletedProcess([], 1, b"", report.encode())
+        with mock.patch("forge_h3.media.subprocess.run", return_value=result):
+            info = probe_video("phone.mov", ffmpeg=shutil.which("ffmpeg"))
+        self.assertEqual((info.width, info.height, info.has_audio), (1080, 1920, False))
+        self.assertAlmostEqual(info.seconds, 4.2)
 
     def test_a_file_without_sound_is_a_clear_error(self):
         path = self.root / "notes.txt"

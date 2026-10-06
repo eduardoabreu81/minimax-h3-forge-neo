@@ -297,6 +297,33 @@ class ForwardTests(unittest.TestCase):
             other = [refs[0], {**refs[1], "ref_audio_t": 6, "audio_latent": torch.randn(1, 32, 2, 6)}]
             self.assertIsNot(model._layout(9, shapes, refs=other), layout)
 
+    def test_packed_forward_with_a_reference_video_matches_the_stream_forward(self):
+        from forge_h3.native.layout import PackedLayout
+        from forge_h3.native.streams import Generation, StreamShapes, text_token_tags
+        with torch.inference_mode():
+            model = tiny_dit(17)
+            shapes = StreamShapes(video=(1, 24, 2, 6, 10), audio=(1, 32, 2, 9))
+            refs = [{"kind": "video_audio", "latent_t": 7, "latent_h": 4, "latent_w": 6, "latent": torch.randn(1, 24, 7, 4, 6),
+                     "ref_audio_t": 12, "audio_latent": torch.randn(1, 32, 2, 12)},
+                    {"kind": "video", "latent_t": 2, "latent_h": 6, "latent_w": 10, "latent": torch.randn(1, 24, 2, 6, 10),
+                     "ref_audio_t": 0, "audio_latent": None}]
+            spans = [(0, 3)]
+            video, audio, context = torch.randn(shapes.video), torch.randn(shapes.audio), torch.randn(1, 9, 48)
+            t = torch.tensor([700.0])
+            model.generation = Generation(shapes=shapes, seed=1, audio_scale=4.0, refs=refs, vision_spans=spans)
+            packed = model(shapes.pack(video, audio), t, context)
+            layout = model._layout(9, shapes, refs=refs)
+            # a soundtrack packs right before its video rows, both from the same time origin
+            self.assertEqual([k for _, _, k in layout.segments], ["text", "ref_audio", "ref_img", "ref_img", "audio", "video"])
+            (a1, b1, _), (a2, _, _) = layout.segments[1:3]
+            self.assertEqual(b1 - a1, 12 * 2)
+            self.assertEqual(layout.position_ids[a1, 0].item(), layout.position_ids[a2, 0].item())
+            payload = {"audio_scale": 4.0, "seed": 1, "refs": refs, "cond_video_latents": [r["latent"] for r in refs],
+                       "cond_audio_latents": [refs[0]["audio_latent"]], "text_token_tags": text_token_tags(9, spans),
+                       "layout": PackedLayout(9, 2, 6, 10, 9, refs=refs)}
+            v, a = model.forward_streams([video, audio], t, context, minimax_payload=payload)
+            self.assertTrue(torch.allclose(packed, shapes.pack(v, a), atol=1e-5))
+
     def test_masked_rows_run(self):
         with torch.inference_mode():
             model = tiny_dit(None)

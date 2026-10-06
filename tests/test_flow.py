@@ -66,10 +66,10 @@ class FakeTextEngine:
     """Records the keyframes handed with the prompt; its vision block spans the first three tokens."""
 
     def __init__(self):
-        self.images, self.audios, self.vision_spans = [], 0, []
+        self.images, self.audios, self.videos, self.vision_spans = [], 0, [], []
 
-    def __call__(self, texts, images=(), audios=0):
-        self.images, self.audios = list(images), audios
+    def __call__(self, texts, images=(), audios=0, videos=()):
+        self.images, self.audios, self.videos = list(images), audios, list(videos)
         self.vision_spans = [(0, 3)] if images else []
         return [torch.randn(7, 48) for _ in texts]
 
@@ -145,7 +145,7 @@ class FlowTests(unittest.TestCase):
         engine.text_processing_engine_h3 = FakeTextEngine()
         engine.is_h3, engine.video_shift, engine.generation = True, 12.0, None
         engine.first_frame = engine.last_frame = None
-        engine.mode, engine.references, engine.reference_audios = "fl2va", [], []
+        engine.mode, engine.references, engine.reference_audios, engine.reference_videos = "fl2va", [], [], []
         return engine
 
     def use_ref2va(self):
@@ -153,9 +153,9 @@ class FlowTests(unittest.TestCase):
         path = checkpoint(self.root / "minimax_h3_ref2va_pruned_w4a8_mixed.safetensors", DIT)
         sys.modules["modules.sd_models"].get_closet_checkpoint_match = lambda value: types.SimpleNamespace(filename=str(path))
 
-    def run_until_sampling(self, p, encode=True, audio_shift=3.0, ref_audios=()):
+    def run_until_sampling(self, p, encode=True, audio_shift=3.0, ref_audios=(), ref_videos=(), keep_soundtrack=True):
         """before_process .. process_before_every_sampling, as Forge calls them; returns the conditioning."""
-        integration.before_process(p, "Video", True, audio_shift, ref_audios)
+        integration.before_process(p, "Video", True, audio_shift, ref_audios, ref_videos, keep_soundtrack)
         p.sd_model = self.engine
         integration.process(p)
         if encode and isinstance(p, Img2Img):
@@ -343,6 +343,66 @@ class FlowTests(unittest.TestCase):
         p = Txt2Img()
         self.run_until_sampling(p)
         self.assertEqual((self.engine.reference_audios, self.engine.text_processing_engine_h3.audios), ([], 0))
+
+    def fake_videos(self, videos):
+        """videos: {path: (width, height, seconds, has_audio)}; frames are read at 24 FPS on the canvas."""
+        from forge_h3.media import VideoInfo
+        probe = patch.object(references, "probe_video", side_effect=lambda path, ffmpeg="": VideoInfo(*videos[path]))
+        read = patch.object(references, "read_video", side_effect=lambda path, w, h, n, ffmpeg="": (
+            torch.randint(0, 256, (min(n, round(videos[path][2] * 24)), h, w, 3), dtype=torch.uint8).numpy()))
+        sound = patch.object(references, "read_audio", side_effect=lambda path, ffmpeg="": (
+            torch.rand(2, round(videos.get(path, (0, 0, 2.5))[2] * 32000)).numpy() * 2 - 1))
+        return probe, read, sound
+
+    def test_ref2va_reference_video_with_its_soundtrack(self):
+        self.use_ref2va()
+        p = Txt2Img(references=[Image.new("RGB", (64, 64), "green")])
+        p.batch_size = 39
+        probe, read, sound = self.fake_videos({"dance.mp4": (40, 30, 3.0, True), "clip.wav": (0, 0, 2.5, False)})
+        with probe, read, sound:
+            cond = self.run_until_sampling(p, ref_audios=("clip.wav",), ref_videos=(None, "dance.mp4"))
+        self.assertEqual((p.h3_request.references, p.h3_request.reference_videos, p.h3_request.reference_audios), (1, 1, 1))
+        self.assertEqual(p.extra_generation_params["H3 Reference videos"], 1)
+        # 3 s at 24 FPS on its own 32-rounded size, cut to the 39-frame clip (17n + 5); the soundtrack is whole
+        refs = self.engine.generation.refs
+        self.assertEqual([r["kind"] for r in refs], ["image", "video_audio", "audio"])
+        video = refs[1]
+        self.assertEqual((video["latent_t"], video["latent_h"], video["latent_w"]), (12, 2, 2))
+        self.assertEqual(tuple(video["latent"].shape), (1, 24, 12, 2, 2))
+        self.assertEqual((video["ref_audio_t"], tuple(video["audio_latent"].shape)), (120, (1, 32, 2, 120)))
+        # Qwen sees one frame every half second, the soundtrack label first
+        (shown,) = self.engine.text_processing_engine_h3.videos
+        self.assertEqual((tuple(shown["frames"].shape), shown["timestamps"], shown["soundtrack"]),
+                         ((4, 32, 32, 3), [0.0, 0.5, 1.0, 1.5], True))
+        self.assertEqual(self.engine.text_processing_engine_h3.audios, 1)
+        dit = self.engine.forge_objects.unet.model.diffusion_model
+        out = dit(p.modified_noise, torch.tensor([900.0]), cond[0].unsqueeze(0))
+        self.assertTrue(torch.isfinite(out).all())
+        layout = next(iter(dit._layouts.values()))
+        self.assertEqual([k for _, _, k in layout.segments],
+                         ["text", "ref_img", "ref_audio", "ref_img", "ref_audio", "audio", "video"])
+
+    def test_reference_video_without_soundtrack_and_its_errors(self):
+        self.use_ref2va()
+        p = Txt2Img()
+        probe, read, sound = self.fake_videos({"a.mp4": (64, 64, 2.5, True), "b.mp4": (64, 64, 10.0, False),
+                                               "long.mp4": (64, 64, 16.0, False), "tiny.mp4": (64, 64, 2.0, False)})
+        with probe, read, sound:
+            self.run_until_sampling(p, ref_videos=("a.mp4",), keep_soundtrack=False)
+            self.assertEqual([r["kind"] for r in self.engine.generation.refs], ["video"])
+            self.assertFalse(self.engine.text_processing_engine_h3.videos[0]["soundtrack"])
+            with self.assertRaisesRegex(H3Error, "long.mp4 lasts 16.0"):
+                integration.before_process(Txt2Img(), "Video", True, 3.0, (), ("long.mp4",))
+            with self.assertRaisesRegex(H3Error, "15 seconds in all; these last 22.5"):
+                integration.before_process(Txt2Img(), "Video", True, 3.0, (), ("b.mp4", "a.mp4", "b.mp4"))
+            # a 5-frame Still image cuts every reference video to 5 frames
+            p = Txt2Img()
+            integration.before_process(p, "Still image", True, 3.0, (), ("tiny.mp4",))
+            self.assertEqual(p.h3_reference_videos[0].frames.shape[0], 5)
+        sys.modules["modules.sd_models"].get_closet_checkpoint_match = lambda value: types.SimpleNamespace(
+            filename=str(self.root / "model.safetensors"))
+        with self.assertRaisesRegex(H3Error, "Reference videos need a Ref2VA checkpoint"):
+            integration.before_process(Txt2Img(), "Video", True, 3.0, (), ("a.mp4",))
 
     def test_ref2va_takes_up_to_nine_pictures(self):
         self.use_ref2va()
