@@ -215,6 +215,16 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 
 Start from the **h3** preset and change the steps and Shift by hand for a turbo LoRA or FastH3.
 
+**Launch options** - two Forge Neo flags worth adding for H3. They go in `COMMANDLINE_ARGS`, in `webui-user.bat` on Windows or `webui-user.sh` on Linux, for example `set COMMANDLINE_ARGS=--cuda-malloc --use-ck-attention`:
+
+| Flag | What it does | When to use it |
+| :--- | :--- | :--- |
+| `--cuda-malloc` | Lets the NVIDIA driver organize the graphics card's memory. H3 swaps very large parts in and out of the card (the text encoder, then the model), and the default organizer can leave the free memory in pieces too small to use | **Always on 16 GB cards** - without it the first step can run out of memory. Harmless elsewhere |
+| `--use-ck-attention` | A faster way to compute attention, the heaviest part of every step, using 8-bit math | Any time - **3-10% faster**, same picture. Needs the comfy-kitchen that comes with Forge Neo from 3 October 2026 |
+
+More about both on the wiki: [16 GB Cards](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/16-GB-Cards) and [Speed Options](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Speed-Options#ck-attention).
+
+
 **Sparse Attention Integrated** - speeds up long clips:
 
 | Scene | Timestep Range | Extra Tokens | Saves |
