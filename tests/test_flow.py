@@ -153,9 +153,10 @@ class FlowTests(unittest.TestCase):
         path = checkpoint(self.root / "minimax_h3_ref2va_pruned_w4a8_mixed.safetensors", DIT)
         sys.modules["modules.sd_models"].get_closet_checkpoint_match = lambda value: types.SimpleNamespace(filename=str(path))
 
-    def run_until_sampling(self, p, encode=True, audio_shift=3.0, ref_audios=(), ref_videos=(), keep_soundtrack=True):
+    def run_until_sampling(self, p, encode=True, audio_shift=3.0, ref_audios=(), ref_videos=(), keep_soundtrack=True,
+                           guide=None):
         """before_process .. process_before_every_sampling, as Forge calls them; returns the conditioning."""
-        integration.before_process(p, "Video", True, audio_shift, ref_audios, ref_videos, keep_soundtrack)
+        integration.before_process(p, "Video", True, audio_shift, ref_audios, ref_videos, keep_soundtrack, guide)
         p.sd_model = self.engine
         integration.process(p)
         if encode and isinstance(p, Img2Img):
@@ -348,7 +349,7 @@ class FlowTests(unittest.TestCase):
         """videos: {path: (width, height, seconds, has_audio)}; frames are read at 24 FPS on the canvas."""
         from forge_h3.media import VideoInfo
         probe = patch.object(references, "probe_video", side_effect=lambda path, ffmpeg="": VideoInfo(*videos[path]))
-        read = patch.object(references, "read_video", side_effect=lambda path, w, h, n, ffmpeg="": (
+        read = patch.object(references, "read_video", side_effect=lambda path, w, h, n, ffmpeg="", cover=False: (
             torch.randint(0, 256, (min(n, round(videos[path][2] * 24)), h, w, 3), dtype=torch.uint8).numpy()))
         sound = patch.object(references, "read_audio", side_effect=lambda path, ffmpeg="": (
             torch.rand(2, round(videos.get(path, (0, 0, 2.5))[2] * 32000)).numpy() * 2 - 1))
@@ -403,6 +404,54 @@ class FlowTests(unittest.TestCase):
             filename=str(self.root / "model.safetensors"))
         with self.assertRaisesRegex(H3Error, "Reference videos need a Ref2VA checkpoint"):
             integration.before_process(Txt2Img(), "Video", True, 3.0, (), ("a.mp4",))
+
+    def test_panel_media_maps_the_inputs_and_fills_api_gaps(self):
+        media = integration.panel_media(["a.wav", None, None, "v.mp4", None, None, False, None, False, "g.wav", -22])
+        self.assertEqual((media["ref_audios"], media["ref_videos"], media["keep_soundtrack"]),
+                         (["a.wav", None, None], ["v.mp4", None, None], False))
+        self.assertEqual(media["guide"], {"video": None, "audio": "g.wav", "frame": -22, "soundtrack": False})
+        # an API call with only Output, audio and Audio shift: no media, the soundtracks kept, no guide
+        self.assertEqual(integration.panel_media([]), {"ref_audios": [None] * 3, "ref_videos": [None] * 3,
+                                                       "keep_soundtrack": True, "guide": None})
+
+    def test_guide_audio_anchors_at_frame_zero_and_is_cut_to_the_clip(self):
+        p = Txt2Img()
+        _probe, _read, sound = self.fake_videos({"song.wav": (0, 0, 9.0, False)})
+        with sound:
+            cond = self.run_until_sampling(p, guide={"video": None, "audio": "song.wav", "frame": 0, "soundtrack": True})
+        self.assertEqual(p.h3_request.guide_index, 0)
+        self.assertEqual(p.extra_generation_params["H3 Guide frame"], 0)
+        # FL2VA without keyframes: the guide is the only keyframe, its audio cut to the 22-frame clip's 37 latents
+        (guide,) = self.engine.generation.keyframes
+        self.assertNotIn("latent", guide)
+        self.assertEqual((guide["resolved_frame_index"], tuple(guide["audio_latent"].shape)), (0, (1, 32, 2, 37)))
+        self.assertEqual(self.engine.text_processing_engine_h3.images, [])  # nothing is named in the prompt
+        dit = self.engine.forge_objects.unet.model.diffusion_model
+        self.assertTrue(torch.isfinite(dit(p.modified_noise, torch.tensor([900.0]), cond[0].unsqueeze(0))).all())
+        layout = next(iter(dit._layouts.values()))
+        self.assertEqual([k for _, _, k in layout.segments], ["text", "cond_audio", "audio", "video"])
+        # the next request without a guide drops it
+        self.run_until_sampling(Txt2Img())
+        self.assertEqual(self.engine.generation.keyframes, [])
+
+    def test_guide_video_fits_after_its_frame_next_to_references(self):
+        self.use_ref2va()
+        p = Txt2Img(references=[Image.new("RGB", (64, 64), "green")])
+        probe, read, sound = self.fake_videos({"prev.mp4": (1920, 1080, 3.0, True)})
+        with probe, read as reader, sound:
+            cond = self.run_until_sampling(p, guide={"video": "prev.mp4", "audio": None, "frame": -5, "soundtrack": True})
+        # the 5 frames left after frame 17, cover-cropped to the 96x64 clip; its own soundtrack comes along
+        self.assertEqual(reader.call_args.args[1:4], (WIDTH, HEIGHT, 5))
+        self.assertTrue(reader.call_args.kwargs["cover"])
+        (guide,) = self.engine.generation.keyframes
+        self.assertEqual((guide["resolved_frame_index"], tuple(guide["latent"].shape)), (17, (1, 24, 2, 4, 6)))
+        self.assertEqual(guide["audio_latent"].shape[-1], 8)  # floor(37 - 5/3 * 17) latents left
+        self.assertEqual([r["kind"] for r in self.engine.generation.refs], ["image"])
+        dit = self.engine.forge_objects.unet.model.diffusion_model
+        self.assertTrue(torch.isfinite(dit(p.modified_noise, torch.tensor([900.0]), cond[0].unsqueeze(0))).all())
+        with self.assertRaisesRegex(H3Error, "Guide frame 22 is outside the clip's 22 frames"):
+            integration.before_process(Txt2Img(), "Video", True, 3.0,
+                                       guide={"video": "prev.mp4", "audio": None, "frame": 22, "soundtrack": True})
 
     def test_ref2va_takes_up_to_nine_pictures(self):
         self.use_ref2va()

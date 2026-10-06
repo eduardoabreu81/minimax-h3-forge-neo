@@ -109,6 +109,17 @@ class ReadAudioTests(unittest.TestCase):
         self.assertEqual(read_video(path, 64, 32, 999).shape[0], 60)
         self.assertEqual(read_audio(path).shape[0], 2)
 
+    def test_cover_keeps_the_aspect_and_crops_the_center(self):
+        path = self.root / "wide.mp4"
+        # a 160x90 frame: left half red, right half blue; cropped to a square, the middle column stays split
+        subprocess.run([shutil.which("ffmpeg"), "-v", "error", "-f", "lavfi", "-i", "color=red:size=80x90:duration=1",
+                        "-f", "lavfi", "-i", "color=blue:size=80x90:duration=1", "-filter_complex", "hstack",
+                        "-pix_fmt", "yuv444p", str(path)], check=True)
+        frames = read_video(path, 64, 64, 1, cover=True)
+        self.assertEqual(frames.shape, (1, 64, 64, 3))
+        self.assertGreater(int(frames[0, 32, 4, 0]), 200)    # red on the left
+        self.assertGreater(int(frames[0, 32, 60, 2]), 200)   # blue on the right
+
     def test_phone_rotation_swaps_the_size(self):
         from unittest import mock
         report = ("  Duration: 00:00:04.20, start: 0.000000, bitrate: 1 kb/s\n"

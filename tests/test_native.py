@@ -324,6 +324,27 @@ class ForwardTests(unittest.TestCase):
             v, a = model.forward_streams([video, audio], t, context, minimax_payload=payload)
             self.assertTrue(torch.allclose(packed, shapes.pack(v, a), atol=1e-5))
 
+    def test_packed_forward_with_a_guide_audio_keyframe_matches_the_stream_forward(self):
+        from forge_h3.native.layout import PackedLayout
+        from forge_h3.native.streams import Generation, StreamShapes
+        with torch.inference_mode():
+            model = tiny_dit(17)
+            shapes = StreamShapes(video=(1, 24, 2, 6, 10), audio=(1, 32, 2, 9))
+            # an audio-only guide at frame 0 and a picture guide at the last frame
+            keyframes = [{"resolved_frame_index": 0, "audio_latent": torch.randn(1, 32, 2, 9)},
+                         {"resolved_frame_index": 21, "latent": torch.randn(1, 24, 1, 6, 10)}]
+            video, audio, context = torch.randn(shapes.video), torch.randn(shapes.audio), torch.randn(1, 7, 48)
+            t = torch.tensor([700.0])
+            model.generation = Generation(shapes=shapes, seed=1, audio_scale=4.0, keyframes=keyframes)
+            packed = model(shapes.pack(video, audio), t, context)
+            layout = model._layout(7, shapes, keyframes)
+            self.assertEqual([k for _, _, k in layout.segments], ["text", "cond_audio", "cond", "audio", "video"])
+            payload = {"audio_scale": 4.0, "seed": 1, "keyframes": keyframes,
+                       "cond_video_latents": [keyframes[1]["latent"]], "cond_audio_latents": [keyframes[0]["audio_latent"]],
+                       "layout": PackedLayout(7, 2, 6, 10, 9, keyframes=keyframes)}
+            v, a = model.forward_streams([video, audio], t, context, minimax_payload=payload)
+            self.assertTrue(torch.allclose(packed, shapes.pack(v, a), atol=1e-5))
+
     def test_masked_rows_run(self):
         with torch.inference_mode():
             model = tiny_dit(None)

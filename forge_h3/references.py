@@ -133,6 +133,36 @@ def collect_videos(paths, clip_frames: int, keep_soundtrack=True, ffmpeg="") -> 
     return videos
 
 
+@dataclass
+class Guide:
+    """A guide anchored at a pixel frame of the clip (ComfyUI MiniMaxH3AddGuide): frames at the clip's size, uint8
+    [1 or 17n + 5, height, width, 3], and/or stereo audio [2, samples] at 32 kHz."""
+    index: int
+    frames: np.ndarray | None = None
+    audio: np.ndarray | None = None
+
+
+def collect_guide(index: int, clip_frames: int, width: int, height: int, video=None, audio=None, keep_soundtrack=True,
+                  ffmpeg="") -> Guide | None:
+    """The guide of a request, or None without a guide video or audio. The video is cover-cropped to the clip, cut to
+    the frames left after the anchor, then to 17n + 5 of them (a single frame under 5); an audio file given on its
+    own takes the place of the video's soundtrack."""
+    if not video and not audio:
+        return None
+    frames = sound = None
+    if video:
+        info = probe_video(video, ffmpeg)
+        frames = read_video(video, width, height, clip_frames - index, ffmpeg, cover=True)
+        if not len(frames):
+            raise H3Error(f"{Path(video).name} gave no frames for the H3 guide.")
+        frames = frames[:1] if len(frames) < MIN_FRAMES else frames[:grid_frames(len(frames))]
+        if keep_soundtrack and info.has_audio and not audio:
+            sound = read_audio(video, ffmpeg)
+    if audio:
+        sound = read_audio(audio, ffmpeg)
+    return Guide(index, frames, sound)
+
+
 def prepare(image, clip_width: int, clip_height: int):
     """(1, H, W, 3) float in [0, 1] at the reference size, the form the vision and the VAE encoders take."""
     image = image.convert("RGB")

@@ -85,11 +85,14 @@ def probe_video(path, ffmpeg="") -> VideoInfo:
                      re.search(r"Stream #\S+.*?: Audio:", report) is not None)
 
 
-def read_video(path, width, height, max_frames, ffmpeg=""):
+def read_video(path, width, height, max_frames, ffmpeg="", cover=False):
     """The frames of a video at H3's 24 FPS, scaled to width x height, as uint8 [frames, height, width, 3] (at most
-    max_frames from the start)."""
+    max_frames from the start); cover keeps the aspect ratio and crops the center instead of stretching."""
+    scale = f"scale={width}:{height}:flags=lanczos"
+    if cover:
+        scale = f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,crop={width}:{height}"
     command = [find_ffmpeg(ffmpeg), "-v", "error", "-nostdin", "-i", str(path), "-an",
-               "-vf", f"fps={FPS},scale={width}:{height}:flags=lanczos", "-frames:v", str(int(max_frames)),
+               "-vf", f"fps={FPS},{scale}", "-frames:v", str(int(max_frames)),
                "-pix_fmt", "rgb24", "-f", "rawvideo", "-"]
     name = Path(path).name
     try:

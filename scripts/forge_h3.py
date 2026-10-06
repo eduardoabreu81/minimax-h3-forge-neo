@@ -11,7 +11,6 @@ if ROOT not in sys.path:
 from modules import script_callbacks, scripts, shared
 
 from forge_h3 import integration, ui
-from forge_h3.contracts import MAX_REF_AUDIOS, MAX_REF_VIDEOS
 from forge_h3.native import compat
 
 ENABLED = False
@@ -47,11 +46,8 @@ class Script(scripts.Script):
         return self.panel.inputs
 
     def before_process(self, p, output="Video", include_audio=True, audio_shift=3.0, *media):
-        # the panel's 3 audio clips, 3 videos and the soundtrack checkbox (an API call may leave them out)
-        videos_end = MAX_REF_AUDIOS + MAX_REF_VIDEOS
-        keep_soundtrack = media[videos_end] if len(media) > videos_end else True
-        integration.script_before_process(p, output, include_audio, audio_shift, media[:MAX_REF_AUDIOS],
-                                          media[MAX_REF_AUDIOS:videos_end], keep_soundtrack)
+        # the panel's reference and guide media (integration.panel_media)
+        integration.script_before_process(p, output, include_audio, audio_shift, *media)
 
     def process(self, p, *args):
         integration.process(p)

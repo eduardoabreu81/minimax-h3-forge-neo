@@ -17,7 +17,8 @@ from backend.patcher.clip import CLIP
 from backend.patcher.unet import UnetPatcher
 from backend.patcher.vae import VAE
 
-from ..contracts import FPS, raise_pending_error
+from ..contracts import FPS, H3Error, raise_pending_error
+from .layout import FRAME_RESCALE
 from .model import AUDIO_SHIFT, VIDEO_SHIFT, MiniMaxH3
 from .streams import Generation, stream_shapes
 from .text_engine import MiniMaxH3TextEngine
@@ -75,6 +76,8 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         # "<Video k>" order, then the audio clips, stereo (2, samples) at 32 kHz
         self.reference_videos: list = []
         self.reference_audios: list[torch.Tensor] = []
+        # a guide anchored at a frame (references.Guide), in either mode; set by the script for every generation
+        self.guide = None
 
     def set_keyframes(self, last_frame: torch.Tensor | None = None) -> None:
         """Called by the script for every FL2VA generation, before Forge's img2img init brings the first frame."""
@@ -93,6 +96,10 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         self.reference_videos = list(videos)
         self.reference_audios = [torch.as_tensor(clip, dtype=torch.float32) for clip in audios]
         self.first_frame = self.last_frame = None
+
+    def set_guide(self, guide) -> None:
+        """Called by the script for every generation: a references.Guide, or None."""
+        self.guide = guide
 
     def keyframe_images(self) -> list[torch.Tensor]:
         """The keyframes in prompt order ("<Picture 1>" is the first frame when there is one)."""
@@ -119,6 +126,8 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         indices = [index for index, image in ((0, self.first_frame), (frames - 1, self.last_frame)) if image is not None]
         keyframes = [{"resolved_frame_index": index, "latent": latent}
                      for index, latent in zip(indices, self._encode_keyframes(width, height))]
+        if self.guide is not None:
+            keyframes.append(self._encode_guide(self.guide, shapes))
         # each reference on its own grid (ComfyUI MiniMaxH3ReferenceToVideo's ref_blocks)
         refs = [{"kind": "image", "latent_h": image.shape[1] // 16, "latent_w": image.shape[2] // 16, "latent": latent}
                 for image, latent in zip(self.references, self._encode_images(self.references))]
@@ -166,6 +175,19 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         pixels = torch.from_numpy(frames).to(video_vae.device).movedim(-1, 0).unsqueeze(0)  # [1, 3, T, h, w] uint8
         pixels = pixels.to(video_vae.vae_dtype).div(127.5).sub(1.0)
         return video_vae.first_stage_model.encode(pixels).float().cpu()
+
+    def _encode_guide(self, guide, shapes) -> dict:
+        # ComfyUI MiniMaxH3AddGuide: the frames as one clip, the audio cut to the clip's audio left after the anchor
+        keyframe = {"resolved_frame_index": guide.index}
+        if guide.frames is not None:
+            keyframe["latent"] = self._encode_video(guide.frames)
+        if guide.audio is not None:
+            room = math.floor(shapes.audio[-1] - FRAME_RESCALE * guide.index)
+            if room < 1:
+                raise H3Error(f"H3 Guide frame {guide.index} is past the end of the clip's audio.")
+            latent = self._encode_audios([torch.as_tensor(guide.audio, dtype=torch.float32)])[0]
+            keyframe["audio_latent"] = latent[..., :room].clone()
+        return keyframe
 
     def video_presentations(self) -> list[dict]:
         """The reference videos as the text encoder sees them: one frame every half second, with its time."""

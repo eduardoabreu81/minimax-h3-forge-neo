@@ -81,6 +81,8 @@ class GenerationRequest:
     references: int = 0
     reference_audios: int = 0
     reference_videos: int = 0
+    # a guide anchored at this pixel frame (negative counts from the end), None without one
+    guide_frame: int | None = None
 
     def __post_init__(self):
         if self.output not in ("Video", "Still image"):
@@ -128,6 +130,18 @@ class GenerationRequest:
             self.frames = integer(self.frames, "Frames")
             if not MIN_FRAMES <= self.frames <= MAX_FRAMES or (self.frames - MIN_FRAMES) % FRAME_STEP:
                 raise H3Error("H3 Frames must follow 17n + 5, from 5 to 362 (for example 22 or 124).")
+        if self.guide_frame is not None:
+            self.guide_frame = integer(self.guide_frame, "Guide frame")
+            if not 0 <= self.guide_index < self.frames:
+                raise H3Error(f"H3 Guide frame {self.guide_frame} is outside the clip's {self.frames} frames "
+                              f"(0 to {self.frames - 1}, or -1 to -{self.frames} from the end).")
+
+    @property
+    def guide_index(self):
+        """The guide's pixel frame counted from the start (ComfyUI MiniMaxH3AddGuide resolved_frame_index)."""
+        if self.guide_frame is None:
+            return None
+        return self.guide_frame if self.guide_frame >= 0 else self.frames + self.guide_frame
 
     @property
     def keyframes(self):

@@ -73,6 +73,18 @@ class Panel:
                                                    elem_id=f"{self.tab}_h3_keep_soundtrack")
                 self.ref_audios = [gr.Audio(sources=["upload"], type="filepath", label=f"Audio clip {j + 1}",
                                             elem_id=f"{self.tab}_h3_ref_audio_{j + 1}") for j in range(MAX_REF_AUDIOS)]
+            # any H3 checkpoint: one guide anchored at a frame (ComfyUI MiniMaxH3AddGuide)
+            with gr.Accordion("Guide", open=False, elem_id=f"{self.tab}_h3_guide"):
+                gr.Markdown("Anchor a video clip and/or an audio track at a frame of the clip, for example a voice or a "
+                            "song to follow from frame 0, or the end of a previous clip to continue. The video is "
+                            "cropped to the clip's size and cut to what fits after that frame. Not named in the prompt.")
+                self.guide_video = gr.Video(sources=["upload"], label="Guide video", elem_id=f"{self.tab}_h3_guide_video")
+                self.guide_soundtrack = gr.Checkbox(value=True, label="Use the guide video's soundtrack",
+                                                    elem_id=f"{self.tab}_h3_guide_soundtrack")
+                self.guide_audio = gr.Audio(sources=["upload"], type="filepath", label="Guide audio (replaces the "
+                                            "video's soundtrack)", elem_id=f"{self.tab}_h3_guide_audio")
+                self.guide_frame = gr.Number(value=0, precision=0, label="Guide frame (negative counts from the end)",
+                                             elem_id=f"{self.tab}_h3_guide_frame")
             self.status = gr.Markdown("Select the H3 text encoder, video VAE and audio VAE in VAE / Text Encoder.")
             with gr.Accordion("Components", open=False):
                 self.summary = gr.Markdown("")
@@ -82,8 +94,9 @@ class Panel:
 
     @property
     def inputs(self):
-        # the order Script.before_process unpacks
-        return [self.output, self.audio, self.audio_shift] + self.ref_audios + self.ref_videos + [self.keep_soundtrack]
+        # the order integration.panel_media unpacks
+        return ([self.output, self.audio, self.audio_shift] + self.ref_audios + self.ref_videos
+                + [self.keep_soundtrack, self.guide_video, self.guide_soundtrack, self.guide_audio, self.guide_frame])
 
     @property
     def needed(self):

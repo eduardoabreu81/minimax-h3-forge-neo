@@ -9,7 +9,15 @@ import uuid
 from pathlib import Path
 
 from . import keyframes, references
-from .contracts import AUDIO_SHIFT, FPS, GenerationRequest, H3Error, set_pending_error
+from .contracts import (
+    AUDIO_SHIFT,
+    FPS,
+    MAX_REF_AUDIOS,
+    MAX_REF_VIDEOS,
+    GenerationRequest,
+    H3Error,
+    set_pending_error,
+)
 from .media import export_video, find_ffmpeg
 from .models import inspect_model, resolve_components
 
@@ -63,23 +71,38 @@ def validate_processing(p):
         raise H3Error("Select Script: None for H3 generation. Script combinations are not validated yet.")
 
 
-def before_process(p, output, include_audio, audio_shift=AUDIO_SHIFT, ref_audios=(), ref_videos=(), keep_soundtrack=True):
+def panel_media(values) -> dict:
+    """The H3 panel's media inputs after Output, audio and Audio shift, as before_process takes them: 3 audio clips,
+    3 videos, the soundtrack checkbox, then the guide video, its soundtrack checkbox, the guide audio and the guide
+    frame. An API call may send fewer; the rest keep their defaults."""
+    values = list(values) + [None] * (MAX_REF_AUDIOS + MAX_REF_VIDEOS + 5 - len(values))
+    videos_end = MAX_REF_AUDIOS + MAX_REF_VIDEOS
+    keep, guide_video, guide_soundtrack, guide_audio, guide_frame = values[videos_end:videos_end + 5]
+    guide = None
+    if guide_video or guide_audio:
+        guide = {"video": guide_video, "audio": guide_audio, "frame": 0 if guide_frame is None else guide_frame,
+                 "soundtrack": guide_soundtrack is not False}
+    return {"ref_audios": values[:MAX_REF_AUDIOS], "ref_videos": values[MAX_REF_AUDIOS:videos_end],
+            "keep_soundtrack": keep is not False, "guide": guide}
+
+
+def before_process(p, output, include_audio, audio_shift=AUDIO_SHIFT, ref_audios=(), ref_videos=(), keep_soundtrack=True,
+                   guide=None):
     """Before Forge loads the model: check the request and turn Frames into a single H3 generation."""
     p.h3_request = None
     set_pending_error(None)
     try:
-        _before_process(p, output, include_audio, audio_shift, ref_audios, ref_videos, keep_soundtrack)
+        _before_process(p, output, include_audio, audio_shift, ref_audios, ref_videos, keep_soundtrack, guide)
     except H3Error as error:
         set_pending_error(error)
         raise
 
 
-def script_before_process(p, output, include_audio, audio_shift=AUDIO_SHIFT, ref_audios=(), ref_videos=(),
-                          keep_soundtrack=True):
+def script_before_process(p, output, include_audio, audio_shift=AUDIO_SHIFT, *media):
     """before_process as Forge's script runner calls it: a rejected request prints one line instead of the traceback
     Forge logs for any exception; the error stays pending and stops the generation when the model is first called."""
     try:
-        before_process(p, output, include_audio, audio_shift, ref_audios, ref_videos, keep_soundtrack)
+        before_process(p, output, include_audio, audio_shift, **panel_media(media))
     except H3Error as error:
         print(f"[MiniMax H3] {error}")
 
@@ -92,11 +115,12 @@ def validate_img2img(p, mode="fl2va"):
         raise H3Error("H3 does not take the latent upscale resize mode. Choose another Resize mode.")
 
 
-def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_videos=(), keep_soundtrack=True):
+def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_videos=(), keep_soundtrack=True, guide=None):
     p.h3_last_frame = None
     p.h3_references = []
     p.h3_reference_audios = []
     p.h3_reference_videos = []
+    p.h3_guide = None
     info = select_h3(p)
     if info is None:
         return
@@ -124,11 +148,15 @@ def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_vi
     request = GenerationRequest(width=p.width, height=p.height, frames=p.batch_size, output=output, include_audio=include_audio,
                                 first_frame=is_img2img and mode == "fl2va", last_frame=last is not None,
                                 audio_shift=audio_shift, mode=mode, references=len(refs),
-                                reference_audios=len(ref_audios), reference_videos=len(ref_videos))
+                                reference_audios=len(ref_audios), reference_videos=len(ref_videos),
+                                guide_frame=guide["frame"] if guide else None)
     if mode == "ref2va":
         # decoded only once the request is valid; a reference video keeps at most the clip's own length
         audios = references.collect_audios(ref_audios, ffmpeg)
         videos = references.collect_videos(ref_videos, request.frames, bool(keep_soundtrack), ffmpeg)
+    if guide:
+        p.h3_guide = references.collect_guide(request.guide_index, request.frames, p.width, p.height, guide["video"],
+                                              guide["audio"], guide["soundtrack"], ffmpeg)
     if request.output == "Video":
         find_ffmpeg(ffmpeg)
     p.h3_request = request
@@ -148,6 +176,10 @@ def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_vi
                  ((request.references, "picture"), (request.reference_videos, "video"),
                   (request.reference_audios, "audio clip")) if n or kind == "picture"]
         conditioning = ", Ref2VA with " + ", ".join(parts)
+    if p.h3_guide is not None:
+        kinds = " and ".join(kind for kind, used in (("frames", p.h3_guide.frames is not None),
+                                                      ("audio", p.h3_guide.audio is not None)) if used)
+        conditioning += f", guide {kinds} at frame {request.guide_index}"
     print(f"[MiniMax H3] {request.output.lower()}: {request.frames} frames at {request.width}x{request.height}, {audio}{conditioning}")
 
 
@@ -172,11 +204,14 @@ def process(p):
         engine.set_references(refs, audios, videos)
     else:
         engine.set_keyframes(keyframes.to_tensor(last) if last is not None else None)
+    guide = getattr(p, "h3_guide", None)
+    engine.set_guide(guide)
     engine.set_audio_shift(request.audio_shift)
     p.extra_generation_params.update({"H3 Variant": "FastH3"} if getattr(p, "h3_fast", False) else {})
     p.extra_generation_params.update({"H3 Mode": "Ref2VA"} if request.mode == "ref2va" else {})
     p.extra_generation_params.update({"H3 References": request.references} if request.references else {})
     p.extra_generation_params.update({"H3 Reference videos": request.reference_videos} if request.reference_videos else {})
+    p.extra_generation_params.update({"H3 Guide frame": request.guide_index} if guide is not None else {})
     p.extra_generation_params.update({"H3 Reference audios": request.reference_audios} if request.reference_audios else {})
     p.extra_generation_params.update({"H3 First frame": True} if request.first_frame else {})
     p.extra_generation_params.update({"H3 Last frame": True} if request.last_frame else {})

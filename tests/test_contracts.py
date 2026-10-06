@@ -268,6 +268,20 @@ class RequestTests(unittest.TestCase):
         with self.assertRaisesRegex(H3Error, "up to 3 reference audio"):
             GenerationRequest(mode="ref2va", reference_audios=4)
 
+    def test_guide_frame_counts_from_either_end(self):
+        self.assertIsNone(GenerationRequest().guide_index)
+        self.assertEqual(GenerationRequest(frames=124, guide_frame=0).guide_index, 0)
+        self.assertEqual(GenerationRequest(frames=124, guide_frame=-1).guide_index, 123)
+        self.assertEqual(GenerationRequest(mode="ref2va", frames=124, guide_frame="-124").guide_index, 0)
+        for frame in (124, -125):
+            with self.assertRaisesRegex(H3Error, "outside the clip's 124 frames"):
+                GenerationRequest(frames=124, guide_frame=frame)
+        # Still image makes a 5-frame clip
+        with self.assertRaisesRegex(H3Error, "outside the clip's 5 frames"):
+            GenerationRequest(output="Still image", frames=124, guide_frame=5)
+        with self.assertRaisesRegex(H3Error, "Guide frame must be an integer"):
+            GenerationRequest(guide_frame=1.5)
+
     def test_reference_videos_and_the_twelve_file_limit(self):
         self.assertEqual(GenerationRequest(mode="ref2va", reference_videos=3).reference_videos, 3)
         with self.assertRaisesRegex(H3Error, "Reference videos need a Ref2VA checkpoint"):
