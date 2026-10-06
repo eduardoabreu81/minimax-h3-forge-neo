@@ -5,7 +5,7 @@ import logging
 
 import gradio as gr
 
-from .contracts import AUDIO_SHIFT, DEFAULT_FRAMES, FPS, H3Error
+from .contracts import AUDIO_SHIFT, DEFAULT_FRAMES, FPS, MAX_REF_AUDIOS, H3Error
 from .integration import checkpoint_info
 from .models import ROLE_LABELS, inspect_model
 from .ui_state import frame_view, preset_frame_view
@@ -54,6 +54,13 @@ class Panel:
                 gr.Markdown("With an FL2VA checkpoint, one image in the **ImageStitch Integrated** gallery is the **last "
                             "frame** (img2img gives the first). With a **Ref2VA** checkpoint the gallery holds up to 9 "
                             "reference pictures, `<Picture 1>`, `<Picture 2>`... in order.")
+            # Ref2VA only: the H3 panel's own audio inputs, as ImageStitch Integrated takes pictures only
+            with gr.Accordion("Reference audio", open=False, visible=False,
+                              elem_id=f"{self.tab}_h3_reference_audio") as self.reference_audio:
+                gr.Markdown("Up to 3 clips, each 2 to 15 seconds, 15 seconds in all. Name them in the prompt as "
+                            "`<Audio 1>`, `<Audio 2>`... (a voice to reuse, a song, a sound).")
+                self.ref_audios = [gr.Audio(sources=["upload"], type="filepath", label=f"<Audio {i + 1}>",
+                                            elem_id=f"{self.tab}_h3_ref_audio_{i + 1}") for i in range(MAX_REF_AUDIOS)]
             self.status = gr.Markdown("Select the H3 text encoder, video VAE and audio VAE in VAE / Text Encoder.")
             with gr.Accordion("Components", open=False):
                 self.summary = gr.Markdown("")
@@ -63,7 +70,7 @@ class Panel:
 
     @property
     def inputs(self):
-        return [self.output, self.audio, self.audio_shift]
+        return [self.output, self.audio, self.audio_shift] + self.ref_audios
 
     @property
     def needed(self):
@@ -91,7 +98,8 @@ class Panel:
                      if hasattr(c, key)} for c in native]
         preset_input = [preset] if preset is not None else []
         inputs = [checkpoint, self.output, modules, self.saved] + native + preset_input
-        outputs = [self.accordion, self.audio, self.audio_shift, duration, self.status, self.summary, self.saved] + native + preset_input
+        outputs = ([self.accordion, self.audio, self.audio_shift, duration, self.status, self.summary, self.saved,
+                    self.reference_audio] + native + preset_input)
 
         def update(value, output, module_values, saved, *values):
             preset_value = values[-1] if preset is not None else None
@@ -130,11 +138,13 @@ class Panel:
                 saved.pop("native", None)
             saved["active"] = active
             summary = ""
+            ref2va = False
             if active:
                 try:
                     from .integration import module_paths
                     from .models import resolve_components
                     components = resolve_components(info.filename, module_paths(module_values))
+                    ref2va = components.mode == "ref2va"
                     mode = ("**Mode:** Ref2VA, reference pictures" if components.mode == "ref2va"
                             else "**Mode:** FL2VA, first and last frame")
                     summary = "  \n".join([mode] + [f"**{ROLE_LABELS[m.role].title()}:** {html.escape(m.path.name)} ({m.quantization})"
@@ -146,7 +156,8 @@ class Panel:
             return [gr.update(visible=active), gr.update(visible=active and output == "Video"),
                     gr.update(visible=active and output == "Video"),
                     gr.update(value=f"{frames} frames / {FPS} FPS = {frames / FPS:.2f} seconds" if active else "",
-                              visible=active and output == "Video"), status, summary, saved] + updates + (
+                              visible=active and output == "Video"), status, summary, saved,
+                    gr.update(visible=active and ref2va)] + updates + (
                                   [gr.update()] if preset is not None else [])
 
         for event in (checkpoint.change, self.output.change, modules.change):

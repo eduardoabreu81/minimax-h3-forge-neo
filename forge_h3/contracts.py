@@ -17,6 +17,10 @@ MAX_AUDIO_SHIFT = 100.0
 # FL2VA (text, first and last frame) and Ref2VA (reference pictures) checkpoints
 MODES = ("fl2va", "ref2va")
 MAX_REFERENCES = 9
+# Ref2VA reference audio (MiniMax-H3 README): up to 3 clips, each 2-15 seconds, 15 seconds in all
+MAX_REF_AUDIOS = 3
+MIN_REF_AUDIO_SECONDS = 2.0
+MAX_REF_AUDIO_SECONDS = 15.0
 
 
 class H3Error(RuntimeError):
@@ -70,6 +74,7 @@ class GenerationRequest:
     audio_shift: float = AUDIO_SHIFT
     mode: str = "fl2va"
     references: int = 0
+    reference_audios: int = 0
 
     def __post_init__(self):
         if self.output not in ("Video", "Still image"):
@@ -81,9 +86,14 @@ class GenerationRequest:
                           "checkpoint for those.")
         if self.mode == "fl2va" and self.references:
             raise H3Error("Reference pictures need a Ref2VA checkpoint.")
+        if self.mode == "fl2va" and self.reference_audios:
+            raise H3Error("Reference audio needs a Ref2VA checkpoint.")
         self.references = integer(self.references, "References")
         if not 0 <= self.references <= MAX_REFERENCES:
             raise H3Error(f"H3 Ref2VA takes up to {MAX_REFERENCES} reference pictures.")
+        self.reference_audios = integer(self.reference_audios, "Reference audios")
+        if not 0 <= self.reference_audios <= MAX_REF_AUDIOS:
+            raise H3Error(f"H3 Ref2VA takes up to {MAX_REF_AUDIOS} reference audio clips.")
         if self.output == "Still image" and self.keyframes:
             raise H3Error("H3 Still image does not take a first or last frame yet. Choose Video, or turn off "
                           "ImageStitch Integrated.")

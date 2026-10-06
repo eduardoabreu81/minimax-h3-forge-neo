@@ -22,7 +22,7 @@ try:
 except ImportError:
     torch = None
 
-from forge_h3 import integration, keyframes
+from forge_h3 import integration, keyframes, references
 from forge_h3.contracts import H3Error, raise_pending_error, set_pending_error
 
 WIDTH, HEIGHT, FRAMES = 96, 64, 22
@@ -66,10 +66,10 @@ class FakeTextEngine:
     """Records the keyframes handed with the prompt; its vision block spans the first three tokens."""
 
     def __init__(self):
-        self.images, self.vision_spans = [], []
+        self.images, self.audios, self.vision_spans = [], 0, []
 
-    def __call__(self, texts, images=()):
-        self.images = list(images)
+    def __call__(self, texts, images=(), audios=0):
+        self.images, self.audios = list(images), audios
         self.vision_spans = [(0, 3)] if images else []
         return [torch.randn(7, 48) for _ in texts]
 
@@ -122,13 +122,17 @@ class FlowTests(unittest.TestCase):
     def make_engine(self):
         from test_native import tiny_dit
 
+        from forge_h3.native.audio_vae import MiniMaxH3AudioVAE
         from forge_h3.native.engine import MiniMaxH3Engine
         from forge_h3.native.video_vae import MiniMaxH3VideoVAE
         torch.manual_seed(0)
         video_vae = MiniMaxH3VideoVAE(ch=32, num_layers=1)
+        audio_vae = MiniMaxH3AudioVAE(encoder_dim=8, latent_dim=64, decoder_dim=256)
         with torch.no_grad():
-            for p in video_vae.parameters():
+            for p in (*video_vae.parameters(), *audio_vae.parameters()):
                 torch.nn.init.normal_(p, std=0.02)
+            audio_vae.latents_mean.zero_()
+            audio_vae.latents_std.fill_(1.0)
         engine = object.__new__(MiniMaxH3Engine)
         dit = tiny_dit(17)
         engine.forge_objects = types.SimpleNamespace(
@@ -137,10 +141,11 @@ class FlowTests(unittest.TestCase):
             unet=types.SimpleNamespace(model=types.SimpleNamespace(
                 diffusion_model=dit, predictor=types.SimpleNamespace(percent_to_sigma=lambda percent: 1.0 - percent))),
             clip=types.SimpleNamespace(patcher=None))
+        engine.audio_vae = types.SimpleNamespace(patcher=None, device="cpu", first_stage_model=audio_vae.requires_grad_(False))
         engine.text_processing_engine_h3 = FakeTextEngine()
         engine.is_h3, engine.video_shift, engine.generation = True, 12.0, None
         engine.first_frame = engine.last_frame = None
-        engine.mode, engine.references = "fl2va", []
+        engine.mode, engine.references, engine.reference_audios = "fl2va", [], []
         return engine
 
     def use_ref2va(self):
@@ -148,9 +153,9 @@ class FlowTests(unittest.TestCase):
         path = checkpoint(self.root / "minimax_h3_ref2va_pruned_w4a8_mixed.safetensors", DIT)
         sys.modules["modules.sd_models"].get_closet_checkpoint_match = lambda value: types.SimpleNamespace(filename=str(path))
 
-    def run_until_sampling(self, p, encode=True, audio_shift=3.0):
+    def run_until_sampling(self, p, encode=True, audio_shift=3.0, ref_audios=()):
         """before_process .. process_before_every_sampling, as Forge calls them; returns the conditioning."""
-        integration.before_process(p, "Video", True, audio_shift)
+        integration.before_process(p, "Video", True, audio_shift, ref_audios)
         p.sd_model = self.engine
         integration.process(p)
         if encode and isinstance(p, Img2Img):
@@ -294,6 +299,50 @@ class FlowTests(unittest.TestCase):
         self.assertEqual(p.init_latent.shape, p.modified_noise.shape)
         dit = self.engine.forge_objects.unet.model.diffusion_model
         self.assertTrue(torch.isfinite(dit(p.modified_noise, torch.tensor([900.0]), cond[0].unsqueeze(0))).all())
+
+    def fake_audio(self, seconds):
+        lengths = dict(seconds)
+        return patch.object(references, "read_audio", side_effect=lambda path, ffmpeg="": (
+            torch.rand(2, round(lengths[path] * 32000)).numpy() * 2 - 1))
+
+    def test_ref2va_reference_audio_rides_as_audio_blocks_after_the_pictures(self):
+        self.use_ref2va()
+        p = Txt2Img(references=[Image.new("RGB", (64, 64), "green")])
+        p.prompt = "<Picture 1> speaks with the voice of <Audio 1> over the beat of <Audio 2>"
+        with self.fake_audio({"voice.wav": 2.0, "beat.mp3": 2.5}):
+            cond = self.run_until_sampling(p, ref_audios=("voice.wav", None, "beat.mp3"))
+        self.assertEqual((p.h3_request.references, p.h3_request.reference_audios), (1, 2))
+        self.assertEqual(p.extra_generation_params["H3 Reference audios"], 2)
+        p.clear_prompt_cache.assert_called()
+        # the text encoder sees one picture and two audio labels; the DiT gets their latents at 40 per second
+        text = self.engine.text_processing_engine_h3
+        self.assertEqual((len(text.images), text.audios), (1, 2))
+        refs = self.engine.generation.refs
+        self.assertEqual([(r["kind"], r.get("ref_audio_t")) for r in refs], [("image", None), ("audio", 80), ("audio", 100)])
+        self.assertEqual([tuple(r["audio_latent"].shape) for r in refs[1:]], [(1, 32, 2, 80), (1, 32, 2, 100)])
+        dit = self.engine.forge_objects.unet.model.diffusion_model
+        out = dit(p.modified_noise, torch.tensor([900.0]), cond[0].unsqueeze(0))
+        self.assertEqual(out.shape, p.modified_noise.shape)
+        self.assertTrue(torch.isfinite(out).all())
+        layout = next(iter(dit._layouts.values()))
+        self.assertEqual([k for _, _, k in layout.segments], ["text", "ref_img", "ref_audio", "ref_audio", "audio", "video"])
+
+    def test_reference_audio_alone_and_its_errors(self):
+        self.use_ref2va()
+        p = Txt2Img()
+        with self.fake_audio({"rain.wav": 3.0}):
+            self.run_until_sampling(p, ref_audios=("rain.wav",))
+        self.assertEqual([r["kind"] for r in self.engine.generation.refs], ["audio"])
+        with self.fake_audio({"long.wav": 16.0}), self.assertRaisesRegex(H3Error, "long.wav lasts 16.0"):
+            integration.before_process(Txt2Img(), "Video", True, 3.0, ("long.wav",))
+        # an FL2VA checkpoint refuses reference audio instead of ignoring it
+        sys.modules["modules.sd_models"].get_closet_checkpoint_match = lambda value: types.SimpleNamespace(
+            filename=str(self.root / "model.safetensors"))
+        with self.assertRaisesRegex(H3Error, "Reference audio needs a Ref2VA checkpoint"):
+            integration.before_process(Txt2Img(), "Video", True, 3.0, ("rain.wav",))
+        p = Txt2Img()
+        self.run_until_sampling(p)
+        self.assertEqual((self.engine.reference_audios, self.engine.text_processing_engine_h3.audios), ([], 0))
 
     def test_ref2va_takes_up_to_nine_pictures(self):
         self.use_ref2va()

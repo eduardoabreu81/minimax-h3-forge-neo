@@ -182,7 +182,9 @@ class MiniMaxH3Model(nn.Module):
             payload["cond_video_latents"] = [kf["latent"] for kf in generation.keyframes]
         if generation.refs:
             payload["refs"] = generation.refs
-            payload["cond_video_latents"] = payload.get("cond_video_latents", []) + [r["latent"] for r in generation.refs]
+            payload["cond_video_latents"] = (payload.get("cond_video_latents", [])
+                                             + [r["latent"] for r in generation.refs if "latent" in r])
+            payload["cond_audio_latents"] = [r["audio_latent"] for r in generation.refs if r.get("audio_latent") is not None]
         tags = text_token_tags(text_len, generation.vision_spans)
         if tags is not None:
             payload["text_token_tags"] = tags
@@ -206,7 +208,8 @@ class MiniMaxH3Model(nn.Module):
         _, _, latent_t, lat_h, lat_w = shapes.video
         signature = (text_len, latent_t, lat_h + lat_h % 2, lat_w + lat_w % 2, shapes.audio[-1])
         key = (signature + tuple((kf["resolved_frame_index"], tuple(kf["latent"].shape)) for kf in keyframes)
-               + tuple((r["kind"], tuple(r["latent"].shape)) for r in refs))
+               + tuple((r["kind"], tuple(r["latent"].shape) if "latent" in r else (), r.get("ref_audio_t", 0))
+                       for r in refs))
         if key not in self._layouts:
             if len(self._layouts) >= LAYOUT_CACHE_SIZE:
                 self._layouts.clear()

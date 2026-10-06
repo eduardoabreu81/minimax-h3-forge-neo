@@ -3,7 +3,8 @@
 The H3 presentation is not chat-templated: token ids are the raw prompt text with no special tokens, and the
 conditioning is the unnormalized hidden state after layer 50 (the checkpoint is truncated there and has no final
 norm). With keyframes (image-to-video) each image comes first as "<Picture i>: " + a vision block, then the prompt;
-every text segment is tokenized on its own, as ComfyUI does.
+Ref2VA reference audio adds "<Audio j>: " labels after the pictures. Every text segment is tokenized on its own, as
+ComfyUI does.
 """
 
 from backend.args import dynamic_args
@@ -48,7 +49,7 @@ class MiniMaxH3TextEngine:
     def tokenize(self, texts: str | list[str]) -> EMBEDDINGS | list[EMBEDDINGS]:
         return self.tokenizer.tokenizer(texts, add_special_tokens=False)["input_ids"]
 
-    def __call__(self, texts: list[str], images: list = ()) -> list:
+    def __call__(self, texts: list[str], images: list = (), audios: int = 0) -> list:
         if any(emphasis.uses_emphasis(text) for text in texts):
             dynamic_args.last_extra_generation_params["Emphasis"] = "None"
 
@@ -57,12 +58,12 @@ class MiniMaxH3TextEngine:
         self.vision_spans = []
         for line in texts:
             if line not in cache:
-                cache[line] = self.text_encoder.encode_token_weights(self.tokens(line, images))[0]
+                cache[line] = self.text_encoder.encode_token_weights(self.tokens(line, images, audios))[0]
                 self.vision_spans = vision_spans(self.text_encoder.image_spans)
             zs.extend(cache[line])  # (L, D) per prompt; the prompt parser stacks the batch
         return zs
 
-    def tokens(self, text: str, images=()) -> list[list[tuple]]:
+    def tokens(self, text: str, images=(), audios: int = 0) -> list[list[tuple]]:
         entries = []
 
         def add_text(segment):
@@ -77,5 +78,8 @@ class MiniMaxH3TextEngine:
             add_text(f"<Picture {i + 1}>: ")
             entries.extend([(VISION_START, 1.0), ({"type": "image", "data": image, "original_type": "image"}, 1.0),
                             (VISION_END, 1.0)])
+        # Ref2VA audio never enters Qwen: only its label, after the pictures
+        for j in range(audios):
+            add_text(f"<Audio {j + 1}>: ")
         add_text(text)
         return [entries or [(PAD, 1.0)]]

@@ -45,8 +45,8 @@ class Script(scripts.Script):
         self.infotext_fields = [(self.panel.audio_shift, "H3 Audio shift")]
         return self.panel.inputs
 
-    def before_process(self, p, output="Video", include_audio=True, audio_shift=3.0, *args):
-        integration.script_before_process(p, output, include_audio, audio_shift)
+    def before_process(self, p, output="Video", include_audio=True, audio_shift=3.0, *ref_audios):
+        integration.script_before_process(p, output, include_audio, audio_shift, ref_audios)
 
     def process(self, p, *args):
         integration.process(p)

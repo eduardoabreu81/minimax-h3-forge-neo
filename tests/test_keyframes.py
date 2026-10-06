@@ -104,6 +104,15 @@ class TextEngineTests(unittest.TestCase):
         (entries,) = self.engine.tokens("", images=[first])
         self.assertEqual(self.text(entries), "<Picture 1>: ")
 
+    def test_reference_audio_labels_follow_the_pictures(self):
+        picture = object()
+        (entries,) = self.engine.tokens("<Audio 1> sings", images=[picture], audios=2)
+        self.assertEqual(self.text(entries), "<Picture 1>: <Audio 1>: <Audio 2>: <Audio 1> sings")
+        # audio never enters the vision path: only the picture is a vision block
+        self.assertEqual(len([e for e, _ in entries if isinstance(e, dict)]), 1)
+        (entries,) = self.engine.tokens("rain", audios=1)
+        self.assertEqual(self.text(entries), "<Audio 1>: rain")
+
     def test_vision_spans_cover_the_flanking_tokens(self):
         self.assertEqual(self.module.vision_spans([(14, 6), (35, 6)]), [(13, 21), (34, 42)])
         self.assertEqual(self.module.vision_spans([(0, 4)]), [(0, 5)])

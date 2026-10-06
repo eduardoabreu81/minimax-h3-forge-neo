@@ -71,18 +71,23 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         # checkpoint the img2img input image is <Picture 1> instead of a first frame
         self.mode = "fl2va"
         self.references: list[torch.Tensor] = []
+        # Ref2VA reference audio, stereo (2, samples) at 32 kHz, in "<Audio j>" order
+        self.reference_audios: list[torch.Tensor] = []
 
     def set_keyframes(self, last_frame: torch.Tensor | None = None) -> None:
         """Called by the script for every FL2VA generation, before Forge's img2img init brings the first frame."""
         self.mode = "fl2va"
         self.references = []
+        self.reference_audios = []
         self.first_frame = None
         self.last_frame = last_frame
 
-    def set_references(self, references: list[torch.Tensor]) -> None:
-        """Called by the script for every Ref2VA generation, in place of set_keyframes."""
+    def set_references(self, references: list[torch.Tensor], audios=()) -> None:
+        """Called by the script for every Ref2VA generation, in place of set_keyframes; audios are stereo [2, samples]
+        clips at 32 kHz."""
         self.mode = "ref2va"
         self.references = list(references)
+        self.reference_audios = [torch.as_tensor(clip, dtype=torch.float32) for clip in audios]
         self.first_frame = self.last_frame = None
 
     def keyframe_images(self) -> list[torch.Tensor]:
@@ -113,6 +118,9 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         # each reference on its own grid (ComfyUI MiniMaxH3ReferenceToVideo's ref_blocks)
         refs = [{"kind": "image", "latent_h": image.shape[1] // 16, "latent_w": image.shape[2] // 16, "latent": latent}
                 for image, latent in zip(self.references, self._encode_images(self.references))]
+        # then the standalone audio clips, which only the audio VAE sees
+        refs += [{"kind": "audio", "ref_audio_t": latent.shape[-1], "audio_latent": latent}
+                 for latent in self._encode_audios(self.reference_audios)]
         self.generation = Generation(shapes=shapes, seed=seed, audio_scale=self.video_shift / self.audio_shift,
                                      keyframes=keyframes, refs=refs,
                                      vision_spans=list(self.text_processing_engine_h3.vision_spans))
@@ -140,6 +148,15 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
             latents.append(latent.float().cpu())
         return latents
 
+    @torch.inference_mode()
+    def _encode_audios(self, waveforms: list[torch.Tensor]) -> list[torch.Tensor]:
+        # each clip on its own, normalized latents [1, 32, 2, T] at 40 latent steps a second (ComfyUI _encode_ref_audio)
+        if not waveforms:
+            return []
+        memory_management.load_model_gpu(self.audio_vae.patcher)
+        return [self.audio_vae.first_stage_model.encode(waveform.unsqueeze(0).to(self.audio_vae.device, torch.float32))
+                .float().cpu() for waveform in waveforms]
+
     def release_generation(self) -> None:
         """Drop the decoded frames and waveform once the script has written them."""
         self.generation = None
@@ -149,8 +166,8 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
     def get_learned_conditioning(self, prompt: list[str]):
         raise_pending_error()
         memory_management.load_model_gpu(self.forge_objects.clip.patcher)
-        # the same pictures for the prompt and the negative prompt: they come before either text
-        return self.text_processing_engine_h3(prompt, images=self.condition_images())
+        # the same pictures and audio labels for the prompt and the negative prompt: they come before either text
+        return self.text_processing_engine_h3(prompt, images=self.condition_images(), audios=len(self.reference_audios))
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str) -> tuple[int, int]:

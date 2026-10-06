@@ -10,7 +10,7 @@ import numpy as np
 from PIL import Image
 
 from forge_h3.contracts import H3Error
-from forge_h3.media import export_still, export_video
+from forge_h3.media import export_still, export_video, read_audio
 
 
 @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg/FFprobe required")
@@ -65,6 +65,37 @@ class ExportTests(unittest.TestCase):
         with Image.open(path) as image:
             self.assertEqual(image.size, (64, 64))
             self.assertEqual(image.info["parameters"], "Seed: 123, H3 Frames: 5")
+
+
+@unittest.skipUnless(shutil.which("ffmpeg"), "FFmpeg required")
+class ReadAudioTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def test_mono_16khz_becomes_stereo_32khz(self):
+        import wave
+        path = self.root / "voice.wav"
+        t = np.arange(16000 * 5 // 2) / 16000
+        pcm = (np.sin(t * 440 * 2 * np.pi) * 0.5 * 32767).astype("<i2")
+        with wave.open(str(path), "wb") as writer:
+            writer.setnchannels(1)
+            writer.setsampwidth(2)
+            writer.setframerate(16000)
+            writer.writeframes(pcm.tobytes())
+        audio = read_audio(path)
+        self.assertEqual(audio.dtype, np.float32)
+        self.assertEqual(audio.shape[0], 2)
+        self.assertAlmostEqual(audio.shape[1] / 32000, 2.5, places=2)
+        self.assertTrue(np.array_equal(audio[0], audio[1]))
+        self.assertAlmostEqual(float(np.abs(audio).max()), 0.5, places=2)
+
+    def test_a_file_without_sound_is_a_clear_error(self):
+        path = self.root / "notes.txt"
+        path.write_text("not audio")
+        with self.assertRaisesRegex(H3Error, "notes.txt"):
+            read_audio(path)
 
 
 if __name__ == "__main__":

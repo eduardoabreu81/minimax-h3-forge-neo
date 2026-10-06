@@ -261,8 +261,36 @@ class RequestTests(unittest.TestCase):
         with self.assertRaisesRegex(H3Error, "mode"):
             GenerationRequest(mode="r2v")
 
+    def test_reference_audio_needs_ref2va_and_at_most_three_clips(self):
+        self.assertEqual(GenerationRequest(mode="ref2va", reference_audios=3).reference_audios, 3)
+        with self.assertRaisesRegex(H3Error, "Reference audio needs a Ref2VA checkpoint"):
+            GenerationRequest(reference_audios=1)
+        with self.assertRaisesRegex(H3Error, "up to 3 reference audio"):
+            GenerationRequest(mode="ref2va", reference_audios=4)
+
 
 class ReferenceTests(unittest.TestCase):
+    def test_reference_audio_follows_minimax_limits(self):
+        from unittest import mock
+
+        import numpy as np
+
+        from forge_h3 import references
+        lengths = {"a.wav": 2.5, "b.wav": 3.0, "short.wav": 1.5, "long.wav": 16.0, "ten.wav": 10.0}
+        fake = lambda path, ffmpeg="": np.zeros((2, round(lengths[path] * 32000)), dtype=np.float32)  # noqa: E731
+        with mock.patch.object(references, "read_audio", side_effect=fake):
+            clips = references.collect_audios(["a.wav", None, "b.wav"])
+            self.assertEqual([c.shape for c in clips], [(2, 80000), (2, 96000)])  # empty slots are skipped
+            self.assertEqual(references.collect_audios([None, None, None]), [])
+            with self.assertRaisesRegex(H3Error, r"2 to 15 seconds; short.wav lasts 1.5"):
+                references.collect_audios(["short.wav"])
+            with self.assertRaisesRegex(H3Error, r"2 to 15 seconds; long.wav lasts 16.0"):
+                references.collect_audios(["long.wav"])
+            with self.assertRaisesRegex(H3Error, r"15 seconds in all; these last 20.0"):
+                references.collect_audios(["ten.wav", "ten.wav"])
+            with self.assertRaisesRegex(H3Error, "up to 3 reference audio clips; 4 were given"):
+                references.collect_audios(["a.wav"] * 4)
+
     def test_pictures_are_scaled_down_to_the_clip_area_never_up(self):
         from forge_h3.references import reference_size
         self.assertEqual(reference_size(1920, 1080, 640, 384), (672, 384))   # Full HD for a 640x384 clip

@@ -63,22 +63,22 @@ def validate_processing(p):
         raise H3Error("Select Script: None for H3 generation. Script combinations are not validated yet.")
 
 
-def before_process(p, output, include_audio, audio_shift=AUDIO_SHIFT):
+def before_process(p, output, include_audio, audio_shift=AUDIO_SHIFT, ref_audios=()):
     """Before Forge loads the model: check the request and turn Frames into a single H3 generation."""
     p.h3_request = None
     set_pending_error(None)
     try:
-        _before_process(p, output, include_audio, audio_shift)
+        _before_process(p, output, include_audio, audio_shift, ref_audios)
     except H3Error as error:
         set_pending_error(error)
         raise
 
 
-def script_before_process(p, output, include_audio, audio_shift=AUDIO_SHIFT):
+def script_before_process(p, output, include_audio, audio_shift=AUDIO_SHIFT, ref_audios=()):
     """before_process as Forge's script runner calls it: a rejected request prints one line instead of the traceback
     Forge logs for any exception; the error stays pending and stops the generation when the model is first called."""
     try:
-        before_process(p, output, include_audio, audio_shift)
+        before_process(p, output, include_audio, audio_shift, ref_audios)
     except H3Error as error:
         print(f"[MiniMax H3] {error}")
 
@@ -91,9 +91,10 @@ def validate_img2img(p, mode="fl2va"):
         raise H3Error("H3 does not take the latent upscale resize mode. Choose another Resize mode.")
 
 
-def _before_process(p, output, include_audio, audio_shift):
+def _before_process(p, output, include_audio, audio_shift, ref_audios=()):
     p.h3_last_frame = None
     p.h3_references = []
+    p.h3_reference_audios = []
     info = select_h3(p)
     if info is None:
         return
@@ -109,20 +110,25 @@ def _before_process(p, output, include_audio, audio_shift):
     if p.h3_fast:
         # its recipe: 8 steps, video shift 10 (audio 3), and the VSA sparse attention it was trained with
         print("[MiniMax H3] FastH3 checkpoint: use 8 steps and Shift 10; turn on Sparse Attention Integrated for its VSA attention")
-    last, refs = None, []
+    last, refs, audios = None, [], []
+    ffmpeg = getattr(shared.opts, "h3_ffmpeg_path", "")
+    ref_audios = [path for path in ref_audios or () if path]
     if mode == "ref2va":
         # the original pictures (img2img input first), each scaled to the clip's area on its own
         refs = [references.prepare(image, p.width, p.height) for image in references.collect(p, is_img2img)]
+        audios = references.collect_audios(ref_audios, ffmpeg)
     else:
         last = keyframes.last_frame(p, p.width, p.height)
     request = GenerationRequest(width=p.width, height=p.height, frames=p.batch_size, output=output, include_audio=include_audio,
                                 first_frame=is_img2img and mode == "fl2va", last_frame=last is not None,
-                                audio_shift=audio_shift, mode=mode, references=len(refs))
+                                audio_shift=audio_shift, mode=mode, references=len(refs),
+                                reference_audios=len(audios) if mode == "ref2va" else len(ref_audios))
     if request.output == "Video":
-        find_ffmpeg(getattr(shared.opts, "h3_ffmpeg_path", ""))
+        find_ffmpeg(ffmpeg)
     p.h3_request = request
     p.h3_last_frame = last
     p.h3_references = refs
+    p.h3_reference_audios = audios
     p.batch_size = 1
     if is_img2img:
         # H3 generates the whole clip from noise; the input image conditions it as the first frame or <Picture 1>
@@ -131,8 +137,9 @@ def _before_process(p, output, include_audio, audio_shift):
     frames = " and ".join(name for name, used in (("first", request.first_frame), ("last", request.last_frame)) if used)
     conditioning = f", {frames} frame" if frames else ""
     if request.mode == "ref2va":
-        count = request.references
+        count, sounds = request.references, request.reference_audios
         conditioning = f", Ref2VA with {count} reference picture{'s' if count != 1 else ''}"
+        conditioning += f" and {sounds} reference audio clip{'s' if sounds != 1 else ''}" if sounds else ""
     print(f"[MiniMax H3] {request.output.lower()}: {request.frames} frames at {request.width}x{request.height}, {audio}{conditioning}")
 
 
@@ -147,17 +154,19 @@ def process(p):
     engine = p.sd_model
     last = getattr(p, "h3_last_frame", None)
     refs = getattr(p, "h3_references", [])
-    # Forge caches the conditioning by prompt, which knows nothing of the pictures shown before it
-    if request.keyframes or refs or engine.condition_images():
+    audios = getattr(p, "h3_reference_audios", [])
+    # Forge caches the conditioning by prompt, which knows nothing of the pictures and audio labels shown before it
+    if request.keyframes or refs or audios or engine.condition_images() or getattr(engine, "reference_audios", None):
         p.clear_prompt_cache()
     if request.mode == "ref2va":
-        engine.set_references(refs)
+        engine.set_references(refs, audios)
     else:
         engine.set_keyframes(keyframes.to_tensor(last) if last is not None else None)
     engine.set_audio_shift(request.audio_shift)
     p.extra_generation_params.update({"H3 Variant": "FastH3"} if getattr(p, "h3_fast", False) else {})
     p.extra_generation_params.update({"H3 Mode": "Ref2VA"} if request.mode == "ref2va" else {})
     p.extra_generation_params.update({"H3 References": request.references} if request.references else {})
+    p.extra_generation_params.update({"H3 Reference audios": request.reference_audios} if request.reference_audios else {})
     p.extra_generation_params.update({"H3 First frame": True} if request.first_frame else {})
     p.extra_generation_params.update({"H3 Last frame": True} if request.last_frame else {})
 

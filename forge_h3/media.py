@@ -12,6 +12,9 @@ from PIL.PngImagePlugin import PngInfo
 
 from .contracts import FPS, SAMPLE_RATE, H3Error
 
+# front left/right plus the center (a mono file's only channel), renormalized so nothing clips
+MIX_TO_STEREO = "pan=stereo|FL<FL+FC|FR<FR+FC"
+
 
 def find_ffmpeg(configured=""):
     if configured:
@@ -28,6 +31,25 @@ def find_ffmpeg(configured=""):
     except (ImportError, RuntimeError):
         raise H3Error("FFmpeg is missing. Install FFmpeg or imageio-ffmpeg, or set H3 FFmpeg executable in Settings.") from None
     return executable
+
+
+def read_audio(path, ffmpeg=""):
+    """The sound of an audio or video file as stereo float32 [2, samples] at H3's 32 kHz in [-1, 1]; FFmpeg resamples.
+    Mono goes to both channels at full level (plain -ac 2 lowers it by 3 dB) and surround folds into the front pair."""
+    command = [find_ffmpeg(ffmpeg), "-v", "error", "-nostdin", "-i", str(path), "-vn", "-af", MIX_TO_STEREO,
+               "-ar", str(SAMPLE_RATE), "-f", "f32le", "-acodec", "pcm_f32le", "-"]
+    name = Path(path).name
+    try:
+        result = subprocess.run(command, capture_output=True, check=False)
+    except OSError as exc:
+        raise H3Error(f"FFmpeg could not start to read {name}: {exc}") from None
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", "replace").strip().splitlines()
+        raise H3Error(f"FFmpeg could not read the audio of {name}: {detail[-1] if detail else 'unknown error'}")
+    samples = np.frombuffer(result.stdout, dtype="<f4")
+    if not samples.size:
+        raise H3Error(f"{name} has no audio.")
+    return np.clip(samples.reshape(-1, 2).T, -1.0, 1.0).copy()
 
 
 def _write_wave(audio, path, samples):
