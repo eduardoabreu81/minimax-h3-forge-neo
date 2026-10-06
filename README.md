@@ -15,7 +15,7 @@ Generate **videos with sound** with **[MiniMax H3](https://github.com/MiniMax-AI
 
 <div align="center">
 
-[![A grey wizard on a stone bridge raises his staff and roars: You shall run on sixteen gigabytes of VRAM on Forge Neo](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/gandalf-16gb.gif)](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/gandalf-16gb.mp4)
+[![A grey wizard on a stone bridge raises his staff and roars: You shall run on sixteen gigabytes of VRAM on Forge Neo](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/gandalf-16gb-subtitled.gif)](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/gandalf-16gb.mp4)
 
 *"You shall run... on sixteen gigabytes of VRAM... on Forge Neo!"* - made by this extension on a **16 GB card with 32 GB of RAM** (first frame from Krea 2, 8 seconds with sound). Click for the MP4.
 
