@@ -40,13 +40,10 @@ def cast_to(weight, dtype=None, device=None):
 
 
 def _select_attention():
+    # Forge Neo's choice, --use-ck-attention included: comfy-kitchen 0.2.37, the minimum (compat.py), runs H3 with it
     if _forge_attention is None:
         return None
-    function = _forge_attention.attention_function
-    # Comfy Kitchen INT8 attention crashes with the int8 convrot H3 checkpoints (ComfyUI #15529)
-    if function is getattr(_forge_attention, "attention_comfy_kitchen_int8", None):
-        return _forge_attention.attention_pytorch
-    return function
+    return _forge_attention.attention_function
 
 
 _attention = _select_attention()

@@ -6,7 +6,7 @@ import inspect
 
 # what the backend imports or patches, by module; an older Forge Neo misses some of these
 REQUIRED = {
-    "backend.attention": ("attention_function", "attention_pytorch"),
+    "backend.attention": ("attention_function",),
     "backend.memory_management": ("cast_to", "get_free_memory", "load_model_gpu", "should_use_fp16", "unload_all_models",
                                   "current_loaded_models"),
     "backend.operations": ("main_stream_worker", "weights_manual_cast", "using_forge_operations"),
@@ -41,7 +41,7 @@ LOADER_BRANCHES = ("Krea2Transformer2DModel", "Qwen3VLModel")
 
 # the fused RMSNorm + split-half RoPE kernel of the DiT and the VAE decoder
 KITCHEN_KERNELS = ("rms_rope_split_half_",)
-MIN_COMFY_KITCHEN = (0, 2, 36)
+MIN_COMFY_KITCHEN = (0, 2, 37)  # Forge Neo d70373e: its INT8 attention runs H3 (--use-ck-attention)
 
 
 def _version_tuple(version: str) -> tuple[int, ...]:
