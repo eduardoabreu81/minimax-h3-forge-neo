@@ -519,6 +519,33 @@ class FlowTests(unittest.TestCase):
         self.run_until_sampling(Txt2Img())
         self.assertIsNone(self.engine.generation.control)
 
+    def test_forge_preprocessors_get_their_slider_defaults_and_fail_with_a_clear_message(self):
+        import numpy as np
+
+        class Parameter:  # modules_forge.supported_preprocessor.PreprocessorParameter
+            def __init__(self, value=0.5, visible=False):
+                self.gradio_update_kwargs = dict(value=value, visible=visible)
+
+        class Canny:
+            name = "canny"
+            slider_1, slider_2, slider_3 = Parameter(100, True), Parameter(200, True), Parameter()
+
+            def __call__(self, image, resolution, slider_1=None, slider_2=None, slider_3=None):
+                self.args = (resolution, int(slider_1), int(slider_2), slider_3)
+                return image
+
+        canny = Canny()
+        shared = forge_stubs.module("modules_forge.shared", supported_preprocessors={"canny": canny})
+        with patch.dict(sys.modules, {"modules_forge.shared": shared}):
+            run = integration.run_preprocessor("canny", 384)
+            run(np.zeros((4, 4, 3), dtype=np.uint8))
+            self.assertEqual(canny.args, (384, 100, 200, None))
+            canny.slider_1 = Parameter(None, True)
+            with self.assertRaisesRegex(H3Error, "The canny preprocessor failed: TypeError"):
+                integration.run_preprocessor("canny", 384)(np.zeros((4, 4, 3), dtype=np.uint8))
+            with self.assertRaisesRegex(H3Error, "Forge Neo has no mlsd preprocessor"):
+                integration.run_preprocessor("mlsd", 384)
+
     def test_ref2va_takes_up_to_nine_pictures(self):
         self.use_ref2va()
         with self.assertRaisesRegex(H3Error, "up to 9"):

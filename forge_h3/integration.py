@@ -120,13 +120,25 @@ def run_preprocessor(name, resolution):
     preprocessor = supported_preprocessors.get(name)
     if preprocessor is None:
         raise H3Error(f"Forge Neo has no {name} preprocessor; check that its built-in ControlNet extensions are enabled.")
-    sliders = [slider.value if getattr(slider, "visible", False) else None
-               for slider in (preprocessor.slider_1, preprocessor.slider_2, preprocessor.slider_3)]
+    sliders = [slider_default(slider) for slider in (preprocessor.slider_1, preprocessor.slider_2, preprocessor.slider_3)]
     unload = getattr(preprocessor, "unload_function", None)
     if unload is not None:
         preprocessor.unload_function = None
         _unloads.append((preprocessor, unload))
-    return lambda frame: preprocessor(frame, resolution, *sliders)
+
+    def run(frame):
+        try:
+            return preprocessor(frame, resolution, *sliders)
+        except Exception as e:
+            raise H3Error(f"The {name} preprocessor failed: {type(e).__name__}: {e}") from e
+
+    return run
+
+
+def slider_default(slider):
+    """A preprocessor slider's default value, as the ControlNet panel would send it; None when it is hidden."""
+    settings = getattr(slider, "gradio_update_kwargs", None) or {}
+    return settings.get("value") if settings.get("visible") else None
 
 
 _unloads = []
