@@ -13,6 +13,7 @@ from .contracts import (
     MAX_REF_VIDEOS,
     H3Error,
 )
+from .control import PREPROCESSORS
 from .integration import checkpoint_info
 from .models import ROLE_LABELS, inspect_model
 from .ui_state import frame_view, preset_frame_view
@@ -21,6 +22,20 @@ COMPONENTS = {}
 NATIVE_CONTROLS = ("batch_size", "batch_count", "sampling", "scheduler", "cfg_scale")
 PANELS = []
 logger = logging.getLogger("forge_h3")
+
+
+def control_names():
+    """The Fun ControlNet files Forge's ControlNet folders hold, for the Control dropdown."""
+    try:
+        from .integration import control_models
+        return [""] + list(control_models())
+    except Exception as e:
+        logger.warning("Could not list the H3 Fun ControlNet models: %s", e)
+        return [""]
+
+
+def control_choices():
+    return gr.update(choices=control_names())
 
 
 def _in_blocks():
@@ -84,6 +99,34 @@ class Panel:
                                             "video's soundtrack)", elem_id=f"{self.tab}_h3_guide_audio")
                 self.guide_frame = gr.Number(value=0, precision=0, label="Guide frame (negative counts from the end)",
                                              elem_id=f"{self.tab}_h3_guide_frame")
+            # any H3 checkpoint: a Fun ControlNet-Union model patch (ComfyUI MiniMaxH3FunControlNetApply)
+            with gr.Accordion("Control", open=False, elem_id=f"{self.tab}_h3_control"):
+                gr.Markdown("Follow the motion and shapes of a video with a **Fun ControlNet** (put "
+                            "`minimax_h3_fun_controlnet_union_2.0` in `models/ControlNet`). Any video works: a "
+                            "preprocessor turns each frame into a pose, depth or edge map, saved next to the result. "
+                            "With a **mask** (white = redraw) the model redraws that part of the source video and keeps "
+                            "the rest; the source is the control video itself unless you add one. Use CFG 1.")
+                with gr.Row():
+                    self.control_model = gr.Dropdown(choices=control_names(), value="", label="Fun ControlNet",
+                                                     elem_id=f"{self.tab}_h3_control_model")
+                    refresh = gr.Button("🔄", elem_id=f"{self.tab}_h3_control_refresh", scale=0, min_width=40)
+                self.control_video = gr.Video(sources=["upload"], label="Control video",
+                                              elem_id=f"{self.tab}_h3_control_video")
+                self.preprocessor = gr.Dropdown(choices=list(PREPROCESSORS), value=list(PREPROCESSORS)[1],
+                                                label="Preprocessor", elem_id=f"{self.tab}_h3_control_preprocessor")
+                with gr.Row():
+                    self.control_mask = gr.File(file_types=["video", "image"], label="Inpainting mask (video or picture)",
+                                                elem_id=f"{self.tab}_h3_control_mask")
+                    self.control_source = gr.Video(sources=["upload"], label="Source video to redraw (optional)",
+                                                   elem_id=f"{self.tab}_h3_control_source")
+                with gr.Row():
+                    self.control_strength = gr.Slider(minimum=0.0, maximum=2.0, step=0.05, value=1.0, label="Strength",
+                                                      elem_id=f"{self.tab}_h3_control_strength")
+                    self.control_start = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, value=0.0, label="Start",
+                                                   elem_id=f"{self.tab}_h3_control_start")
+                    self.control_end = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, value=1.0, label="End",
+                                                 elem_id=f"{self.tab}_h3_control_end")
+                refresh.click(control_choices, outputs=[self.control_model], queue=False, show_progress=False)
             self.status = gr.Markdown("Select the H3 text encoder, video VAE and audio VAE in VAE / Text Encoder.")
             with gr.Accordion("Components", open=False):
                 self.summary = gr.Markdown("")
@@ -95,7 +138,9 @@ class Panel:
     def inputs(self):
         # the order integration.panel_media unpacks
         return [self.output, self.audio, self.audio_shift, self.ref_media, self.keep_soundtrack, self.guide_video,
-                self.guide_soundtrack, self.guide_audio, self.guide_frame]
+                self.guide_soundtrack, self.guide_audio, self.guide_frame, self.control_model, self.control_video,
+                self.preprocessor, self.control_mask, self.control_source, self.control_strength, self.control_start,
+                self.control_end]
 
     @property
     def needed(self):

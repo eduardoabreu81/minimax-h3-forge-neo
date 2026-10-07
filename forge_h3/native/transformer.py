@@ -187,6 +187,8 @@ class MiniMaxH3Model(nn.Module):
                                              + [r["latent"] for r in generation.refs if "latent" in r])
             payload["cond_audio_latents"] = (payload.get("cond_audio_latents", [])
                                              + [r["audio_latent"] for r in generation.refs if r.get("audio_latent") is not None])
+        if generation.control is not None:
+            payload["control"] = generation.control
         tags = text_token_tags(text_len, generation.vision_spans)
         if tags is not None:
             payload["text_token_tags"] = tags
@@ -335,9 +337,14 @@ class MiniMaxH3Model(nn.Module):
         # rotation table computed once per forward, consumed by the kitchen split-half rope
         rope_freqs = rope_rotation_table(self.rope_freqs(layout.position_ids, device), dtype)
 
-        for i, block in enumerate(self.blocks):
-            transformer_options["block_index"] = i
-            h = block(h, t_emb, mod_segments, rope_freqs, transformer_options)
+        control = payload.get("control")
+        if control is not None and control.active(float(sigma_v)):
+            # the Fun ControlNet's stream runs next to its blocks (native/fun_control.py)
+            h = control.apply(self.blocks, h, t_emb, mod_segments, rope_freqs, transformer_options, layout)
+        else:
+            for i, block in enumerate(self.blocks):
+                transformer_options["block_index"] = i
+                h = block(h, t_emb, mod_segments, rope_freqs, transformer_options)
 
         # target streams are single contiguous segments (audio then video, last two)
         va, vb, _ = next(s for s in layout.segments if s[2] == "video")

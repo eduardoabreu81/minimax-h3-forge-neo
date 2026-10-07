@@ -8,6 +8,7 @@ frames and the waveform for the script, and hands Forge the first frame.
 """
 
 import math
+import os
 
 import torch
 from backend import memory_management
@@ -18,6 +19,7 @@ from backend.patcher.unet import UnetPatcher
 from backend.patcher.vae import VAE
 
 from ..contracts import FPS, H3Error, raise_pending_error
+from . import fun_control
 from .layout import FRAME_RESCALE
 from .model import AUDIO_SHIFT, VIDEO_SHIFT, MiniMaxH3
 from .streams import Generation, stream_shapes
@@ -78,6 +80,10 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         self.reference_audios: list[torch.Tensor] = []
         # a guide anchored at a frame (references.Guide), in either mode; set by the script for every generation
         self.guide = None
+        # the panel's Control (control.ControlInput) for this generation, and the last Fun ControlNet loaded,
+        # (path, ModelPatcher), kept between generations
+        self.control = None
+        self.control_model = None
 
     def set_keyframes(self, last_frame: torch.Tensor | None = None) -> None:
         """Called by the script for every FL2VA generation, before Forge's img2img init brings the first frame."""
@@ -100,6 +106,21 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
     def set_guide(self, guide) -> None:
         """Called by the script for every generation: a references.Guide, or None."""
         self.guide = guide
+
+    def set_control(self, control) -> None:
+        """Called by the script for every generation: a control.ControlInput, or None."""
+        self.control = control
+
+    def control_patcher(self, path: str):
+        """The Fun ControlNet as a Forge ModelPatcher, loaded once per file."""
+        if self.control_model is None or self.control_model[0] != path:
+            self.control_model = None
+            patcher, config = fun_control.load(path)
+            blocks = len(config["injection_layers"])
+            print(f"[MiniMax H3] Fun ControlNet {os.path.basename(path)}: {blocks} control blocks at DiT blocks "
+                  f"{', '.join(map(str, config['injection_layers']))}" + (", inpainting post_norm" if config["inpaint_post_norm"] else ""))
+            self.control_model = (path, patcher)
+        return self.control_model[1]
 
     def keyframe_images(self) -> list[torch.Tensor]:
         """The keyframes in prompt order ("<Picture 1>" is the first frame when there is one)."""
@@ -143,8 +164,29 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         self.generation = Generation(shapes=shapes, seed=seed, audio_scale=self.video_shift / self.audio_shift,
                                      keyframes=keyframes, refs=refs,
                                      vision_spans=list(self.text_processing_engine_h3.vision_spans))
+        if self.control is not None:
+            self.generation.control = self._control_run(self.control, shapes)
         self.forge_objects.unet.model.diffusion_model.generation = self.generation
         return (1, 1, shapes.video_size + math.prod(shapes.audio[1:]))
+
+    def _control_run(self, control, shapes) -> fun_control.ControlRun:
+        # ComfyUI MiniMaxH3FunControlPatch.prepare_control_latent: the control video, then for inpainting the
+        # visibility (1 where the source stays) and the masked source, each through the video VAE
+        patcher = self.control_patcher(control.model)
+        model = patcher.model
+        latent = self._encode_video(control.frames) if control.frames is not None else None
+        masked = visibility = None
+        if control.mask is not None:
+            visibility = 1.0 - torch.from_numpy(control.mask)
+            source = torch.from_numpy(control.source).float().div(255.0)
+            pixels = fun_control.masked_source(source, visibility, model.inpaint_post_norm)
+            masked = self._encode_video(pixels)
+        hint = fun_control.hint_from(latent, masked, visibility)
+        if tuple(hint.shape[2:]) != tuple(shapes.video[2:]):
+            raise H3Error(f"The H3 control latent is {tuple(hint.shape[2:])}, the clip's is {tuple(shapes.video[2:])}.")
+        predictor = self.forge_objects.unet.model.predictor
+        return fun_control.ControlRun(model, hint, control.strength, float(predictor.percent_to_sigma(control.start)),
+                                      float(predictor.percent_to_sigma(control.end)))
 
     def _encode_keyframes(self, width: int, height: int) -> list[torch.Tensor]:
         images = self.keyframe_images()
@@ -169,11 +211,13 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
 
     @torch.inference_mode()
     def _encode_video(self, frames) -> torch.Tensor:
-        # all the frames of one reference video, [1, 24, 5n + 2, h/16, w/16] (ComfyUI vae.encode of the frame batch)
+        # all the frames of one video, [1, 24, 5n + 2, h/16, w/16] (ComfyUI vae.encode of the frame batch); uint8
+        # frames [T, h, w, 3], or float ones in [0, 1]
         video_vae = self.forge_objects.vae
         memory_management.load_model_gpu(video_vae.patcher)
-        pixels = torch.from_numpy(frames).to(video_vae.device).movedim(-1, 0).unsqueeze(0)  # [1, 3, T, h, w] uint8
-        pixels = pixels.to(video_vae.vae_dtype).div(127.5).sub(1.0)
+        pixels = torch.as_tensor(frames).to(video_vae.device).movedim(-1, 0).unsqueeze(0)  # [1, 3, T, h, w]
+        scale = 127.5 if pixels.dtype == torch.uint8 else 0.5
+        pixels = pixels.to(video_vae.vae_dtype).div(scale).sub(1.0)
         return video_vae.first_stage_model.encode(pixels).float().cpu()
 
     def _encode_guide(self, guide, shapes) -> dict:

@@ -83,6 +83,8 @@ class GenerationRequest:
     reference_videos: int = 0
     # a guide anchored at this pixel frame (negative counts from the end), None without one
     guide_frame: int | None = None
+    # a Fun ControlNet with a control video and/or an inpainting mask (control.py)
+    control: bool = False
 
     def __post_init__(self):
         if self.output not in ("Video", "Still image"):

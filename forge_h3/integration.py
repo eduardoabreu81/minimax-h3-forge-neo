@@ -63,27 +63,126 @@ def validate_processing(p):
         raise H3Error("Select Script: None for H3 generation. Script combinations are not validated yet.")
 
 
+CONTROL_DEFAULTS = {"strength": 1.0, "start": 0.0, "end": 1.0}
+
+
 def panel_media(values) -> dict:
     """The H3 panel's media inputs after Output, audio and Audio shift, as before_process takes them: the reference
     files (videos and audio clips together), the soundtrack checkbox, then the guide video, its soundtrack checkbox,
-    the guide audio and the guide frame. An API call may send fewer; the rest keep their defaults."""
-    files, keep, guide_video, guide_soundtrack, guide_audio, guide_frame = (list(values) + [None] * 6)[:6]
+    the guide audio and the guide frame, then the Control: model, video, preprocessor, mask, source video, strength,
+    start and end. An API call may send fewer; the rest keep their defaults."""
+    (files, keep, guide_video, guide_soundtrack, guide_audio, guide_frame,
+     control_model, control_video, preprocessor, mask, source, strength, start, end) = (list(values) + [None] * 14)[:14]
     guide = None
     if guide_video or guide_audio:
         guide = {"video": guide_video, "audio": guide_audio, "frame": 0 if guide_frame is None else guide_frame,
                  "soundtrack": guide_soundtrack is not False}
+    control = None
+    if control_model or control_video or mask:
+        values = {"strength": strength, "start": start, "end": end}
+        control = {"model": control_model, "video": control_video, "preprocessor": preprocessor, "mask": mask,
+                   "source": source, **{k: CONTROL_DEFAULTS[k] if v is None else v for k, v in values.items()}}
     if isinstance(files, str):
         files = [files]
-    return {"ref_media": list(files or ()), "keep_soundtrack": keep is not False, "guide": guide}
+    return {"ref_media": list(files or ()), "keep_soundtrack": keep is not False, "guide": guide, "control": control}
+
+
+def control_model_path(value):
+    """A Fun ControlNet chosen by file name (the panel's list) or given as a path (an API call)."""
+    if not value:
+        return None
+    if Path(value).is_file():
+        return str(Path(value).resolve())
+    path = control_models().get(value)
+    if path is None:
+        raise H3Error(f"Fun ControlNet {value} was not found. Put it in models/ControlNet and refresh the list.")
+    return path
+
+
+def control_folders():
+    from modules import paths_internal
+    from modules_forge import shared as forge_shared
+    folders = [forge_shared.controlnet_dir, *getattr(forge_shared.cmd_opts, "controlnet_dirs", [])]
+    # ComfyUI's folder for model patches, in case models are shared with it
+    folders.append(str(Path(paths_internal.models_path) / "model_patches"))
+    return list(dict.fromkeys(str(folder) for folder in folders if folder))
+
+
+def control_models():
+    from . import control
+    return control.list_models(control_folders())
+
+
+def run_preprocessor(name, resolution):
+    """The frame function of a Forge Neo preprocessor; the legacy ones keep their model between frames (they unload
+    it after every call otherwise), see finish_preprocessor."""
+    from modules_forge.shared import supported_preprocessors
+    preprocessor = supported_preprocessors.get(name)
+    if preprocessor is None:
+        raise H3Error(f"Forge Neo has no {name} preprocessor; check that its built-in ControlNet extensions are enabled.")
+    sliders = [slider.value if getattr(slider, "visible", False) else None
+               for slider in (preprocessor.slider_1, preprocessor.slider_2, preprocessor.slider_3)]
+    unload = getattr(preprocessor, "unload_function", None)
+    if unload is not None:
+        preprocessor.unload_function = None
+        _unloads.append((preprocessor, unload))
+    return lambda frame: preprocessor(frame, resolution, *sliders)
+
+
+_unloads = []
+
+
+def finish_preprocessor():
+    while _unloads:
+        preprocessor, unload = _unloads.pop()
+        preprocessor.unload_function = unload
+        try:
+            unload()
+        except Exception as e:
+            print(f"[MiniMax H3] could not unload the {preprocessor.name} preprocessor: {e}")
+
+
+def control_summary(control):
+    parts = [kind for kind, used in (("control video", control.frames is not None), ("inpainting mask", control.mask is not None)) if used]
+    by = f" ({control.preprocessor})" if control.preprocessor else ""
+    return f"Fun ControlNet {Path(control.model).name}: {' and '.join(parts)}{by}, strength {control.strength:g}"
+
+
+def control_infotext(control):
+    params = {"H3 Control model": Path(control.model).stem, "H3 Control strength": control.strength}
+    if control.preprocessor:
+        params["H3 Control preprocessor"] = control.preprocessor
+    if (control.start, control.end) != (0.0, 1.0):
+        params["H3 Control range"] = f"{control.start:g}-{control.end:g}"
+    if control.mask is not None:
+        params["H3 Control inpainting"] = True
+    return params
+
+
+def collect_control(settings, width, height, frames, ffmpeg=""):
+    from modules import shared
+
+    from . import control
+    if not settings:
+        return None
+    try:
+        return control.collect(control_model_path(settings["model"]), settings["video"], settings["preprocessor"],
+                               settings["mask"], settings["source"], settings["strength"], settings["start"],
+                               settings["end"], width, height, frames, ffmpeg,
+                               run_preprocessor=lambda name: run_preprocessor(name, min(width, height)),
+                               cancelled=lambda: shared.state.interrupted)
+    finally:
+        finish_preprocessor()
 
 
 def before_process(p, output, include_audio, audio_shift=AUDIO_SHIFT, ref_audios=(), ref_videos=(), keep_soundtrack=True,
-                   guide=None, ref_media=()):
+                   guide=None, ref_media=(), control=None):
     """Before Forge loads the model: check the request and turn Frames into a single H3 generation."""
     p.h3_request = None
     set_pending_error(None)
     try:
-        _before_process(p, output, include_audio, audio_shift, ref_audios, ref_videos, keep_soundtrack, guide, ref_media)
+        _before_process(p, output, include_audio, audio_shift, ref_audios, ref_videos, keep_soundtrack, guide, ref_media,
+                        control)
     except H3Error as error:
         set_pending_error(error)
         raise
@@ -107,7 +206,8 @@ def validate_img2img(p, mode="fl2va"):
 
 
 def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_videos=(), keep_soundtrack=True, guide=None,
-                    ref_media=()):
+                    ref_media=(), control=None):
+    p.h3_control = None
     p.h3_last_frame = None
     p.h3_references = []
     p.h3_reference_audios = []
@@ -143,7 +243,7 @@ def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_vi
                                 first_frame=is_img2img and mode == "fl2va", last_frame=last is not None,
                                 audio_shift=audio_shift, mode=mode, references=len(refs),
                                 reference_audios=len(ref_audios), reference_videos=len(ref_videos),
-                                guide_frame=guide["frame"] if guide else None)
+                                guide_frame=guide["frame"] if guide else None, control=bool(control))
     if mode == "ref2va":
         # decoded only once the request is valid; a reference video keeps at most the clip's own length
         audios = references.collect_audios(ref_audios, ffmpeg)
@@ -151,6 +251,10 @@ def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_vi
     if guide:
         p.h3_guide = references.collect_guide(request.guide_index, request.frames, p.width, p.height, guide["video"],
                                               guide["audio"], guide["soundtrack"], ffmpeg)
+    if control:
+        p.h3_control = collect_control(control, p.width, p.height, request.frames, ffmpeg)
+        if getattr(p, "cfg_scale", 1.0) != 1.0:
+            print(f"[MiniMax H3] the Fun ControlNet is guidance-distilled: use CFG 1 (CFG {p.cfg_scale:g} applies guidance twice)")
     if request.output == "Video":
         find_ffmpeg(ffmpeg)
     p.h3_request = request
@@ -174,6 +278,8 @@ def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_vi
         kinds = " and ".join(kind for kind, used in (("frames", p.h3_guide.frames is not None),
                                                       ("audio", p.h3_guide.audio is not None)) if used)
         conditioning += f", guide {kinds} at frame {request.guide_index}"
+    if p.h3_control is not None:
+        conditioning += ", " + control_summary(p.h3_control)
     print(f"[MiniMax H3] {request.output.lower()}: {request.frames} frames at {request.width}x{request.height}, {audio}{conditioning}")
 
 
@@ -200,6 +306,10 @@ def process(p):
         engine.set_keyframes(keyframes.to_tensor(last) if last is not None else None)
     guide = getattr(p, "h3_guide", None)
     engine.set_guide(guide)
+    control = getattr(p, "h3_control", None)
+    engine.set_control(control)
+    if control is not None:
+        p.extra_generation_params.update(control_infotext(control))
     engine.set_audio_shift(request.audio_shift)
     p.extra_generation_params.update({"H3 Variant": "FastH3"} if getattr(p, "h3_fast", False) else {})
     p.extra_generation_params.update({"H3 Mode": "Ref2VA"} if request.mode == "ref2va" else {})
@@ -238,6 +348,7 @@ def before_sampling(p, noise):
         raise error
     shape = p.sd_model.prepare(request.frames, request.width, request.height, int(p.seeds[0]))
     _set_sparse_attention(p)
+    _add_control(p)
     # Forge made p.rng for an image latent; the samplers that add noise on the way (ancestral, SDE, res_multistep)
     # draw from it too, so it has to give the packed shape
     p.rng = rng.ImageRNG(shape, p.seeds, subseeds=p.subseeds, subseed_strength=p.subseed_strength,
@@ -247,6 +358,21 @@ def before_sampling(p, noise):
         # img2img samples from init_latent at full denoise; the packed start is pure noise
         p.init_latent = torch.zeros_like(p.modified_noise)
     patches.begin_sampling()
+
+
+def _add_control(p):
+    """Forge loads the Fun ControlNet next to the DiT for sampling, as its own ControlNet extension does: an extra
+    model patcher on this generation's copy of the UNet patcher, with VRAM kept free for the control stream."""
+    engine = p.sd_model
+    if getattr(engine.generation, "control", None) is None:
+        return
+    unet = engine.forge_objects.unet.clone()
+    unet.add_extra_model_patcher_during_sampling(engine.control_model[1])
+    shapes = engine.generation.shapes
+    tokens = shapes.video_size // 24 // 4 + shapes.audio[-1] * 2
+    # the control stream, the hidden state it starts from and one block output, in the DiT's 16-bit compute dtype
+    unet.add_extra_preserved_memory_during_sampling(3 * tokens * unet.model.diffusion_model.hidden_size * 2)
+    engine.forge_objects.unet = unet
 
 
 def _set_sparse_attention(p):
@@ -312,3 +438,10 @@ def _write_video(p, processed, request, generation):
     Path(output).with_suffix(".json").write_text(json.dumps(sidecar, indent=2), encoding="utf-8")
     processed.video_path = output
     processed.comments += f"H3 video saved to {output}\n"
+    control = getattr(p, "h3_control", None)
+    if control is not None and control.preprocessor and control.frames is not None:
+        # what the preprocessor made of the video, to check it against the result
+        guide = export_video([Image.fromarray(frame) for frame in control.frames], None,
+                             Path(output).with_name(Path(output).stem + "-control.mp4"),
+                             ffmpeg=getattr(shared.opts, "h3_ffmpeg_path", ""), cancelled=lambda: shared.state.interrupted)
+        processed.comments += f"H3 control video saved to {guide}\n"

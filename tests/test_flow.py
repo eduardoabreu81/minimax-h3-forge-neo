@@ -154,9 +154,10 @@ class FlowTests(unittest.TestCase):
         sys.modules["modules.sd_models"].get_closet_checkpoint_match = lambda value: types.SimpleNamespace(filename=str(path))
 
     def run_until_sampling(self, p, encode=True, audio_shift=3.0, ref_audios=(), ref_videos=(), keep_soundtrack=True,
-                           guide=None, ref_media=()):
+                           guide=None, ref_media=(), control=None):
         """before_process .. process_before_every_sampling, as Forge calls them; returns the conditioning."""
-        integration.before_process(p, "Video", True, audio_shift, ref_audios, ref_videos, keep_soundtrack, guide, ref_media)
+        integration.before_process(p, "Video", True, audio_shift, ref_audios, ref_videos, keep_soundtrack, guide, ref_media,
+                                   control)
         p.sd_model = self.engine
         integration.process(p)
         if encode and isinstance(p, Img2Img):
@@ -410,7 +411,8 @@ class FlowTests(unittest.TestCase):
         self.assertEqual((media["ref_media"], media["keep_soundtrack"]), (["a.wav", "v.mp4"], False))
         self.assertEqual(media["guide"], {"video": None, "audio": "g.wav", "frame": -22, "soundtrack": False})
         # an API call with only Output, audio and Audio shift: no media, the soundtracks kept, no guide
-        self.assertEqual(integration.panel_media([]), {"ref_media": [], "keep_soundtrack": True, "guide": None})
+        self.assertEqual(integration.panel_media([]), {"ref_media": [], "keep_soundtrack": True, "guide": None,
+                                                            "control": None})
         self.assertEqual(integration.panel_media(["one.mp4"])["ref_media"], ["one.mp4"])
 
     def test_the_single_file_list_is_split_by_kind_in_upload_order(self):
@@ -466,6 +468,56 @@ class FlowTests(unittest.TestCase):
         with self.assertRaisesRegex(H3Error, "Guide frame 22 is outside the clip's 22 frames"):
             integration.before_process(Txt2Img(), "Video", True, 3.0,
                                        guide={"video": "prev.mp4", "audio": None, "frame": 22, "soundtrack": True})
+
+    def test_control_video_and_mask_run_the_controlnet_next_to_the_dit(self):
+        import numpy as np
+        from test_fun_control import tiny_control
+
+        from forge_h3 import control
+        from forge_h3.native import fun_control
+
+        class Unet:
+            """Forge's UnetPatcher, as far as a script adds models and memory for sampling."""
+            def __init__(self, model):
+                self.model, self.extra, self.memory = model, [], 0
+
+            def clone(self):
+                return self
+
+            def add_extra_model_patcher_during_sampling(self, patcher):
+                self.extra.append(patcher)
+
+            def add_extra_preserved_memory_during_sampling(self, size):
+                self.memory += size
+
+        unet = self.engine.forge_objects.unet = Unet(self.engine.forge_objects.unet.model)
+        self.engine.control_model = None
+        model_file = self.root / "minimax_h3_fun_controlnet_union_2.0.safetensors"
+        model_file.write_bytes(b"")
+        patcher = types.SimpleNamespace(model=tiny_control())
+        dance = np.random.default_rng(0).integers(0, 256, (30, HEIGHT, WIDTH, 3), dtype=np.uint8)
+        reads = {"dance.mp4": dance, "mask.mp4": np.full((1, HEIGHT, WIDTH, 3), 255, dtype=np.uint8)}
+        settings = {"model": str(model_file), "video": "dance.mp4", "preprocessor": "Gray", "mask": "mask.mp4",
+                    "source": None, "strength": 0.8, "start": 0.0, "end": 0.5}
+        p = Txt2Img()
+        with (patch.object(fun_control, "load", return_value=(patcher, {"injection_layers": (0, 1), "inpaint_post_norm": True})),
+              patch.object(control, "read_video", side_effect=lambda path, w, h, n, ffmpeg, cover: reads[path][:n])):
+            cond = self.run_until_sampling(p, control=settings)
+        self.assertTrue(p.h3_request.control)
+        run = self.engine.generation.control
+        # gray control (24) | visibility (1) | masked dance (24), on the 22-frame clip's latent grid
+        self.assertEqual(tuple(run.hint.shape), (1, 49, 7, HEIGHT // 16, WIDTH // 16))
+        self.assertEqual((run.strength, run.sigma_start, run.sigma_end), (0.8, 1.0, 0.5))
+        self.assertEqual(float(run.hint[:, 24].abs().sum()), 0.0)  # the white mask redraws everything
+        self.assertEqual((unet.extra, unet.memory > 0), ([patcher], True))
+        self.assertEqual({k: v for k, v in p.extra_generation_params.items() if k.startswith("H3 Control")},
+                         {"H3 Control model": model_file.stem, "H3 Control strength": 0.8,
+                          "H3 Control preprocessor": "gray", "H3 Control range": "0-0.5", "H3 Control inpainting": True})
+        dit = self.engine.forge_objects.unet.model.diffusion_model
+        self.assertTrue(torch.isfinite(dit(p.modified_noise, torch.tensor([900.0]), cond[0].unsqueeze(0))).all())
+        # the next request without a control drops it
+        self.run_until_sampling(Txt2Img())
+        self.assertIsNone(self.engine.generation.control)
 
     def test_ref2va_takes_up_to_nine_pictures(self):
         self.use_ref2va()
