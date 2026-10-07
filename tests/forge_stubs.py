@@ -42,7 +42,9 @@ def engine_modules():
     stubs = text_processing()
     memory = module("backend.memory_management", load_model_gpu=lambda patcher: None,
                     should_use_fp16=lambda device: False, vae_device=lambda: "cpu")
-    base = module("backend.diffusion_engine.base", ForgeDiffusionEngine=type("ForgeDiffusionEngine", (), {}),
+    base = module("backend.diffusion_engine.base", ForgeDiffusionEngine=type("ForgeDiffusionEngine", (), {
+                      # Forge Neo's own: the shift goes to the predictor
+                      "set_shift": lambda self, shift, *args, **kwargs: setattr(self, "predictor_shift", shift)}),
                   ForgeObjects=types.SimpleNamespace)
     stubs.update({
         "backend": module("backend", memory_management=memory, args=stubs["backend.args"],

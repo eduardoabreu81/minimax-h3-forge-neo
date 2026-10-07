@@ -1,5 +1,6 @@
 """The two-frame vision block of a Ref2VA reference video (native/text_encoder.py process_video_block)."""
 
+import importlib
 import sys
 import unittest
 from dataclasses import dataclass
@@ -31,8 +32,18 @@ class VideoBlockTests(unittest.TestCase):
         self.enterContext(patch.dict(sys.modules, modules))
         sys.modules.pop("forge_h3.native.text_encoder", None)
         self.addCleanup(sys.modules.pop, "forge_h3.native.text_encoder", None)
-        from forge_h3.native import text_encoder
-        self.module = text_encoder
+        # import_module, not "from forge_h3.native import": the package keeps an earlier test's module as an attribute
+        self.module = importlib.import_module("forge_h3.native.text_encoder")
+
+    def test_vision_settings_read_both_forge_layouts(self):
+        qwen35 = sys.modules["backend.nn.llm.qwen35"]
+        # up to d70373e: one dict
+        qwen35.QWEN3VL_VISION = dict(num_heads=16, patch_size=16, hidden_size=1024, depth=24)
+        self.assertEqual(self.module.vision_defaults(), qwen35.QWEN3VL_VISION)
+        # since the Qwen-Image 2.1 update: a shared part plus one dict per model, the 8B closest to the 32B tower
+        qwen35.QWEN3VL_VISION_COMMON = dict(num_heads=16, patch_size=16)
+        qwen35.QWEN3VL_VISION = {"qwen3vl_4b": dict(hidden_size=1024, depth=24), "qwen3vl_8b": dict(hidden_size=1152, depth=27)}
+        self.assertEqual(self.module.vision_defaults(), dict(num_heads=16, patch_size=16, hidden_size=1152, depth=27))
 
     def test_the_two_frames_fill_the_temporal_patch(self):
         frames = torch.stack([torch.full((64, 96, 3), 0.25), torch.full((64, 96, 3), 0.75)])

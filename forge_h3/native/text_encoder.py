@@ -14,14 +14,23 @@ from dataclasses import asdict, dataclass
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from backend.nn.llm import llama
+from backend.nn.llm import llama, qwen35
 from backend.nn.llm.llama import Llama2_, Qwen3VL, Qwen3VL_4BConfig
-from backend.nn.llm.qwen35 import QWEN3VL_VISION, Qwen3VLVisionModel
+from backend.nn.llm.qwen35 import Qwen3VLVisionModel
 
 VISION_KEYS = ("hidden_size", "intermediate_size", "depth", "num_heads", "num_position_embeddings", "deepstack_visual_indexes")
 # Forge Neo's Qwen3VL image normalization
 QWEN_IMAGE_MEAN = (0.5, 0.5, 0.5)
 QWEN_IMAGE_STD = (0.5, 0.5, 0.5)
+
+
+def vision_defaults() -> dict:
+    """Forge Neo's Qwen3-VL vision settings: one dict up to d70373e, a shared part plus one dict per model since its
+    Qwen-Image 2.1 update; the 32B tower's own sizes come from the text encoder config (VISION_KEYS)."""
+    common = getattr(qwen35, "QWEN3VL_VISION_COMMON", None)
+    if common is None:
+        return dict(qwen35.QWEN3VL_VISION)
+    return {**common, **qwen35.QWEN3VL_VISION["qwen3vl_8b"]}
 
 
 def process_video_block(frames: torch.Tensor, patch_size=16, temporal_patch_size=2, merge_size=2, min_pixels=3136,
@@ -88,7 +97,8 @@ def _attention_mask(attention_mask: torch.Tensor | None, x: torch.Tensor) -> tor
 
 
 class Qwen3VL32B(Qwen3VL):
-    def __init__(self, config_dict: dict):
+    def __init__(self, config_dict: dict, **kwargs):
+        # Forge Neo after d70373e passes model_type (its 4B or 8B); the 32B config is our own
         nn.Module.__init__(self)
         text_config: dict = config_dict.get("text_config", {})
         if text_config.get("hidden_size", None) != Qwen3VL_32BConfig.hidden_size:
@@ -102,7 +112,7 @@ class Qwen3VL32B(Qwen3VL):
         self.num_layers = config.num_hidden_layers
         self.model = Llama2_(config)
 
-        vision_config = {**QWEN3VL_VISION, "out_hidden_size": config.hidden_size}
+        vision_config = {**vision_defaults(), "out_hidden_size": config.hidden_size}
         for key in VISION_KEYS:
             if key in config_dict.get("vision_config", {}):
                 vision_config[key] = config_dict["vision_config"][key]

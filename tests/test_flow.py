@@ -194,6 +194,12 @@ class FlowTests(unittest.TestCase):
         self.assertEqual(out.shape, p.modified_noise.shape)
         self.assertTrue(torch.isfinite(out).all())
 
+    def test_set_shift_takes_the_size_newer_forge_passes(self):
+        # Forge Neo after d70373e calls set_shift(shift=..., width=..., height=...)
+        self.engine.set_shift(shift=10.0, width=WIDTH, height=HEIGHT)
+        dit = self.engine.forge_objects.unet.model.diffusion_model
+        self.assertEqual((self.engine.predictor_shift, self.engine.video_shift, dit.sigma_shift_video), (10.0, 10.0, 10.0))
+
     def test_audio_shift_reaches_the_model_and_the_infotext(self):
         p = Txt2Img()
         self.run_until_sampling(p)
