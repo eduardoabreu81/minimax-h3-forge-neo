@@ -154,10 +154,10 @@ class FlowTests(unittest.TestCase):
         sys.modules["modules.sd_models"].get_closet_checkpoint_match = lambda value: types.SimpleNamespace(filename=str(path))
 
     def run_until_sampling(self, p, encode=True, audio_shift=3.0, ref_audios=(), ref_videos=(), keep_soundtrack=True,
-                           guide=None, ref_media=(), control=None):
+                           guide=None, ref_media=(), control=None, control2=None, soundtrack="Generated"):
         """before_process .. process_before_every_sampling, as Forge calls them; returns the conditioning."""
         integration.before_process(p, "Video", True, audio_shift, ref_audios, ref_videos, keep_soundtrack, guide, ref_media,
-                                   control)
+                                   control, control2, soundtrack)
         p.sd_model = self.engine
         integration.process(p)
         if encode and isinstance(p, Img2Img):
@@ -418,7 +418,15 @@ class FlowTests(unittest.TestCase):
         self.assertEqual(media["guide"], {"video": None, "audio": "g.wav", "frame": -22, "soundtrack": False})
         # an API call with only Output, audio and Audio shift: no media, the soundtracks kept, no guide
         self.assertEqual(integration.panel_media([]), {"ref_media": [], "keep_soundtrack": True, "guide": None,
-                                                            "control": None})
+                                                            "control": None, "control2": None, "soundtrack": "Generated"})
+        # the second control is off until it has a preprocessor (Off counts as none); it takes the API defaults
+        second = [None] * 14 + ["depth.mp4", "Off", 0.3, 0.0, 1.0]
+        self.assertIsNone(integration.panel_media(second)["control2"])
+        second[15], second[16] = "Depth (Depth Anything V2)", None
+        self.assertEqual(integration.panel_media(second + ["Control video"])["control2"],
+                         {"video": "depth.mp4", "preprocessor": "Depth (Depth Anything V2)", "strength": 1.0,
+                          "start": 0.0, "end": 1.0})
+        self.assertEqual(integration.panel_media(second + ["Control video"])["soundtrack"], "Control video")
         self.assertEqual(integration.panel_media(["one.mp4"])["ref_media"], ["one.mp4"])
 
     def test_the_single_file_list_is_split_by_kind_in_upload_order(self):
@@ -510,7 +518,7 @@ class FlowTests(unittest.TestCase):
               patch.object(control, "read_video", side_effect=lambda path, w, h, n, ffmpeg, cover: reads[path][:n])):
             cond = self.run_until_sampling(p, control=settings)
         self.assertTrue(p.h3_request.control)
-        run = self.engine.generation.control
+        (run,) = self.engine.generation.controls
         # gray control (24) | visibility (1) | masked dance (24), on the 22-frame clip's latent grid
         self.assertEqual(tuple(run.hint.shape), (1, 49, 7, HEIGHT // 16, WIDTH // 16))
         self.assertEqual((run.strength, run.sigma_start, run.sigma_end), (0.8, 1.0, 0.5))
@@ -523,7 +531,111 @@ class FlowTests(unittest.TestCase):
         self.assertTrue(torch.isfinite(dit(p.modified_noise, torch.tensor([900.0]), cond[0].unsqueeze(0))).all())
         # the next request without a control drops it
         self.run_until_sampling(Txt2Img())
-        self.assertIsNone(self.engine.generation.control)
+        self.assertEqual(self.engine.generation.controls, [])
+
+    def control_setup(self):
+        """The Unet patcher fake, a tiny Fun ControlNet file and the patches that load it and read control videos."""
+        import numpy as np
+        from test_fun_control import tiny_control
+
+        from forge_h3 import control
+        from forge_h3.native import fun_control
+
+        class Unet:
+            def __init__(self, model):
+                self.model, self.extra, self.memory = model, [], 0
+
+            def clone(self):
+                return self
+
+            def add_extra_model_patcher_during_sampling(self, patcher):
+                self.extra.append(patcher)
+
+            def add_extra_preserved_memory_during_sampling(self, size):
+                self.memory += size
+
+        unet = self.engine.forge_objects.unet = Unet(self.engine.forge_objects.unet.model)
+        self.engine.control_model = None
+        model_file = self.root / "minimax_h3_fun_controlnet_union_2.0.safetensors"
+        model_file.write_bytes(b"")
+        patcher = types.SimpleNamespace(model=tiny_control())
+        rng = np.random.default_rng(0)
+        reads = {name: rng.integers(0, 256, (30, HEIGHT, WIDTH, 3), dtype=np.uint8) for name in ("dance.mp4", "depth.mp4")}
+        load = patch.object(fun_control, "load", return_value=(patcher, {"injection_layers": (0, 1), "inpaint_post_norm": True}))
+        read = patch.object(control, "read_video", side_effect=lambda path, w, h, n, ffmpeg, cover: reads[path][:n])
+        return unet, model_file, patcher, load, read
+
+    def test_a_second_control_adds_another_condition_through_the_same_controlnet(self):
+        unet, model_file, patcher, load, read = self.control_setup()
+        first = {"model": str(model_file), "video": "dance.mp4", "preprocessor": "Gray", "mask": None, "source": None,
+                 "strength": 0.7, "start": 0.0, "end": 1.0}
+        p = Txt2Img()
+        with load as loader, read as reader:
+            cond = self.run_until_sampling(p, control=first, control2={"video": None, "preprocessor": "None (the video is a control video already)",
+                                                                       "strength": 0.3, "start": 0.0, "end": 0.6})
+        # no video of its own: it reads the first control's video; the model is loaded once
+        self.assertEqual([call.args[0] for call in reader.call_args_list], ["dance.mp4", "dance.mp4"])
+        self.assertEqual(loader.call_count, 1)
+        first_run, second_run = self.engine.generation.controls
+        self.assertIs(first_run.model, second_run.model)
+        self.assertEqual((first_run.strength, second_run.strength, second_run.sigma_end), (0.7, 0.3, 0.4))  # end 0.6 = sigma 0.4 here
+        self.assertFalse(torch.equal(first_run.hint, second_run.hint))  # gray against the plain video
+        self.assertEqual(unet.extra, [patcher])
+        # the hidden state, then a stream and a block output for each control
+        shapes = self.engine.generation.shapes
+        tokens = shapes.video_size // 24 // 4 + shapes.audio[-1] * 2
+        self.assertEqual(unet.memory, 5 * tokens * unet.model.diffusion_model.hidden_size * 2)
+        params = {k: v for k, v in p.extra_generation_params.items() if k.startswith("H3 Control")}
+        self.assertEqual(params, {"H3 Control model": model_file.stem, "H3 Control strength": 0.7,
+                                  "H3 Control preprocessor": "gray", "H3 Control 2 strength": 0.3,
+                                  "H3 Control 2 range": "0-0.6"})
+        dit = self.engine.forge_objects.unet.model.diffusion_model
+        self.assertTrue(torch.isfinite(dit(p.modified_noise, torch.tensor([900.0]), cond[0].unsqueeze(0))).all())
+        with self.assertRaisesRegex(H3Error, "second H3 control uses the Fun ControlNet of the first"):
+            integration.before_process(Txt2Img(), "Video", True, control2={"video": "depth.mp4", "preprocessor": "Gray",
+                                                                           "strength": 0.3, "start": 0.0, "end": 1.0})
+
+    def test_the_video_keeps_the_original_sound_of_a_source(self):
+        import numpy as np
+
+        from forge_h3.media import VideoInfo
+        tone = np.tile(np.linspace(-0.5, 0.5, 64000, dtype=np.float32), (2, 1))
+        sounds = {"song.wav": tone, "dance.mp4": tone * 0.5, "talk.mp4": tone * 0.25}
+        infos = {"dance.mp4": VideoInfo(WIDTH, HEIGHT, 2.0, True), "talk.mp4": VideoInfo(WIDTH, HEIGHT, 2.0, True),
+                 "mute.mp4": VideoInfo(WIDTH, HEIGHT, 2.0, False)}
+        probe = patch.object(references, "probe_video", side_effect=lambda path, ffmpeg="": infos[path])
+        sound = patch.object(references, "read_audio", side_effect=lambda path, ffmpeg="": sounds[path].copy())
+        with probe, sound:
+            # the guide audio from its frame on: 12 frames = 0.5 s of silence first
+            p = Txt2Img()
+            self.run_until_sampling(p, guide={"video": None, "audio": "song.wav", "frame": 12, "soundtrack": True},
+                                    soundtrack="Guide")
+            self.assertEqual(p.h3_soundtrack.shape, (2, 16000 + 64000))
+            self.assertEqual(float(np.abs(p.h3_soundtrack[:, :16000]).max()), 0.0)
+            self.assertTrue(np.array_equal(p.h3_soundtrack[:, 16000:], tone))
+            self.assertEqual(p.extra_generation_params["H3 Soundtrack"], "Guide")
+            # the first reference video's sound, whether or not H3 hears it
+            self.use_ref2va()
+            p = Txt2Img(references=[Image.new("RGB", (64, 64))])
+            p.h3_soundtrack = None
+            with patch.object(references, "read_video", side_effect=lambda path, w, h, n, ffmpeg="", cover=False:
+                              np.zeros((min(n, 48), h, w, 3), dtype=np.uint8)):
+                integration.before_process(p, "Video", True, ref_videos=("talk.mp4",), keep_soundtrack=False,
+                                           soundtrack="Reference video 1")
+            self.assertTrue(np.array_equal(p.h3_soundtrack, tone * 0.25))
+            # a source without sound, a missing source and an unknown name are refused
+            with self.assertRaisesRegex(H3Error, "Soundtrack Control video needs a control video"):
+                integration.before_process(Txt2Img(), "Video", True, soundtrack="Control video")
+            with self.assertRaisesRegex(H3Error, "Soundtrack Guide needs a guide audio"):
+                integration.before_process(Txt2Img(), "Video", True, soundtrack="Guide")
+            with self.assertRaisesRegex(H3Error, "Unknown H3 soundtrack"):
+                integration.before_process(Txt2Img(), "Video", True, soundtrack="Studio")
+            # without audio the choice is left out; the generated sound stays the default
+            p = Txt2Img()
+            with patch("builtins.print"):
+                integration.before_process(p, "Video", False, soundtrack="Guide")
+            self.assertIsNone(p.h3_soundtrack)
+        self.assertIsNone(references.source_soundtrack("Generated"))
 
     def test_forge_preprocessors_get_their_slider_defaults_and_fail_with_a_clear_message(self):
         import numpy as np

@@ -76,7 +76,8 @@ class StreamTests(unittest.TestCase):
         from forge_h3.native.streams import Generation, stream_shapes
         dit = tiny_dit(17)
         shapes = stream_shapes(frames, 96, 64)
-        dit.generation = Generation(shapes=shapes, seed=5, audio_scale=4.0, control=run)
+        runs = run if isinstance(run, list) else [run] if run is not None else []
+        dit.generation = Generation(shapes=shapes, seed=5, audio_scale=4.0, controls=runs)
         torch.manual_seed(3)
         x = shapes.pack(torch.randn(shapes.video), torch.randn(shapes.audio))
         return dit, shapes, dit(x, torch.tensor([700.0]), torch.randn(1, 7, 48))
@@ -116,6 +117,22 @@ class StreamTests(unittest.TestCase):
         _, _, late = self.forward(ControlRun(tiny_control(), self.hint(), sigma_start=0.5, sigma_end=0.0))
         self.assertTrue(torch.allclose(plain, late, atol=1e-6))
         self.assertTrue(ControlRun(tiny_control(), self.hint(), sigma_start=0.8, sigma_end=0.2).active(0.7))
+
+    def test_two_controls_add_their_streams(self):
+        from forge_h3.native.fun_control import ControlRun
+        model, hint = tiny_control(), self.hint()
+        _, _, once = self.forward(ControlRun(model, hint.clone(), strength=1.0))
+        # each stream starts from the same hidden state, so two equal halves make the whole
+        _, _, halves = self.forward([ControlRun(model, hint.clone(), strength=0.5), ControlRun(model, hint.clone(), strength=0.5)])
+        self.assertTrue(torch.allclose(once, halves, atol=1e-5))
+        # a zero-gated second control leaves the first one's result as it is
+        silent = tiny_control()
+        with torch.no_grad():
+            for block in silent.control_blocks:
+                block.after_proj.weight.zero_()
+                block.after_proj.bias.zero_()
+        _, _, both = self.forward([ControlRun(model, hint.clone()), ControlRun(silent, self.hint(49))])
+        self.assertTrue(torch.allclose(once, both, atol=1e-6))
 
     def test_hint_with_a_mask_stacks_control_visibility_and_masked_source(self):
         from forge_h3.native.fun_control import hint_from, masked_source

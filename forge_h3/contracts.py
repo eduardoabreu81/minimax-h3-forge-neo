@@ -26,6 +26,10 @@ MAX_REF_VIDEOS = 3
 MIN_REF_VIDEO_SECONDS = 2.0
 MAX_REF_VIDEO_SECONDS = 15.0
 MAX_REF_FILES = 12
+# the MP4's sound: H3's own audio, or the original sound of a source the request already has; H3 always generates
+# new audio, which a guide or a reference video only steers
+GENERATED_SOUNDTRACK = "Generated"
+SOUNDTRACKS = (GENERATED_SOUNDTRACK, "Guide", "Control video", "Reference video 1")
 
 
 class H3Error(RuntimeError):

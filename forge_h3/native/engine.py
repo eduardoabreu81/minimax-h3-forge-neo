@@ -80,9 +80,9 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         self.reference_audios: list[torch.Tensor] = []
         # a guide anchored at a frame (references.Guide), in either mode; set by the script for every generation
         self.guide = None
-        # the panel's Control (control.ControlInput) for this generation, and the last Fun ControlNet loaded,
+        # the panel's Controls (control.ControlInput) for this generation, and the last Fun ControlNet loaded,
         # (path, ModelPatcher), kept between generations
-        self.control = None
+        self.controls = []
         self.control_model = None
 
     def set_keyframes(self, last_frame: torch.Tensor | None = None) -> None:
@@ -107,9 +107,11 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         """Called by the script for every generation: a references.Guide, or None."""
         self.guide = guide
 
-    def set_control(self, control) -> None:
-        """Called by the script for every generation: a control.ControlInput, or None."""
-        self.control = control
+    def set_control(self, controls) -> None:
+        """Called by the script for every generation: the control.ControlInput list (one or None works too)."""
+        if controls is None:
+            controls = []
+        self.controls = list(controls) if isinstance(controls, (list, tuple)) else [controls]
 
     def control_patcher(self, path: str):
         """The Fun ControlNet as a Forge ModelPatcher, loaded once per file."""
@@ -165,8 +167,7 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         self.generation = Generation(shapes=shapes, seed=seed, audio_scale=self.video_shift / self.audio_shift,
                                      keyframes=keyframes, refs=refs,
                                      vision_spans=list(self.text_processing_engine_h3.vision_spans))
-        if self.control is not None:
-            self.generation.control = self._control_run(self.control, shapes)
+        self.generation.controls = [self._control_run(control, shapes) for control in self.controls]
         self.forge_objects.unet.model.diffusion_model.generation = self.generation
         return (1, 1, shapes.video_size + math.prod(shapes.audio[1:]))
 

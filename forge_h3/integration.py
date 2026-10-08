@@ -9,7 +9,14 @@ import uuid
 from pathlib import Path
 
 from . import keyframes, references
-from .contracts import AUDIO_SHIFT, FPS, GenerationRequest, H3Error, set_pending_error
+from .contracts import (
+    AUDIO_SHIFT,
+    FPS,
+    GENERATED_SOUNDTRACK,
+    GenerationRequest,
+    H3Error,
+    set_pending_error,
+)
 from .media import export_video, find_ffmpeg
 from .models import inspect_model, resolve_components
 
@@ -64,15 +71,19 @@ def validate_processing(p):
 
 
 CONTROL_DEFAULTS = {"strength": 1.0, "start": 0.0, "end": 1.0}
+# the second control's preprocessor choice that leaves it out
+CONTROL2_OFF = "Off"
 
 
 def panel_media(values) -> dict:
     """The H3 panel's media inputs after Output, audio and Audio shift, as before_process takes them: the reference
     files (videos and audio clips together), the soundtrack checkbox, then the guide video, its soundtrack checkbox,
     the guide audio and the guide frame, then the Control: model, video, preprocessor, mask, source video, strength,
-    start and end. An API call may send fewer; the rest keep their defaults."""
+    start and end, then the second control's video, preprocessor, strength, start and end, then the MP4's soundtrack.
+    An API call may send fewer; the rest keep their defaults."""
     (files, keep, guide_video, guide_soundtrack, guide_audio, guide_frame,
-     control_model, control_video, preprocessor, mask, source, strength, start, end) = (list(values) + [None] * 14)[:14]
+     control_model, control_video, preprocessor, mask, source, strength, start, end,
+     video2, preprocessor2, strength2, start2, end2, soundtrack) = (list(values) + [None] * 20)[:20]
     guide = None
     if guide_video or guide_audio:
         guide = {"video": guide_video, "audio": guide_audio, "frame": 0 if guide_frame is None else guide_frame,
@@ -82,9 +93,15 @@ def panel_media(values) -> dict:
         values = {"strength": strength, "start": start, "end": end}
         control = {"model": control_model, "video": control_video, "preprocessor": preprocessor, "mask": mask,
                    "source": source, **{k: CONTROL_DEFAULTS[k] if v is None else v for k, v in values.items()}}
+    control2 = None
+    if preprocessor2 and preprocessor2 != CONTROL2_OFF:
+        values = {"strength": strength2, "start": start2, "end": end2}
+        control2 = {"video": video2, "preprocessor": preprocessor2,
+                    **{k: CONTROL_DEFAULTS[k] if v is None else v for k, v in values.items()}}
     if isinstance(files, str):
         files = [files]
-    return {"ref_media": list(files or ()), "keep_soundtrack": keep is not False, "guide": guide, "control": control}
+    return {"ref_media": list(files or ()), "keep_soundtrack": keep is not False, "guide": guide, "control": control,
+            "control2": control2, "soundtrack": soundtrack or GENERATED_SOUNDTRACK}
 
 
 def control_model_path(value):
@@ -154,20 +171,27 @@ def finish_preprocessor():
             print(f"[MiniMax H3] could not unload the {preprocessor.name} preprocessor: {e}")
 
 
-def control_summary(control):
-    parts = [kind for kind, used in (("control video", control.frames is not None), ("inpainting mask", control.mask is not None)) if used]
-    by = f" ({control.preprocessor})" if control.preprocessor else ""
-    return f"Fun ControlNet {Path(control.model).name}: {' and '.join(parts)}{by}, strength {control.strength:g}"
+def control_summary(controls):
+    texts = []
+    for control in controls:
+        parts = [kind for kind, used in (("control video", control.frames is not None),
+                                         ("inpainting mask", control.mask is not None)) if used]
+        by = f" ({control.preprocessor})" if control.preprocessor else ""
+        texts.append(f"{' and '.join(parts)}{by}, strength {control.strength:g}")
+    return f"Fun ControlNet {Path(controls[0].model).name}: {'; '.join(texts)}"
 
 
-def control_infotext(control):
-    params = {"H3 Control model": Path(control.model).stem, "H3 Control strength": control.strength}
-    if control.preprocessor:
-        params["H3 Control preprocessor"] = control.preprocessor
-    if (control.start, control.end) != (0.0, 1.0):
-        params["H3 Control range"] = f"{control.start:g}-{control.end:g}"
-    if control.mask is not None:
-        params["H3 Control inpainting"] = True
+def control_infotext(controls):
+    params = {"H3 Control model": Path(controls[0].model).stem}
+    for n, control in enumerate(controls):
+        prefix = "H3 Control" if n == 0 else f"H3 Control {n + 1}"
+        params[f"{prefix} strength"] = control.strength
+        if control.preprocessor:
+            params[f"{prefix} preprocessor"] = control.preprocessor
+        if (control.start, control.end) != (0.0, 1.0):
+            params[f"{prefix} range"] = f"{control.start:g}-{control.end:g}"
+        if control.mask is not None:
+            params[f"{prefix} inpainting"] = True
     return params
 
 
@@ -188,13 +212,13 @@ def collect_control(settings, width, height, frames, ffmpeg=""):
 
 
 def before_process(p, output, include_audio, audio_shift=AUDIO_SHIFT, ref_audios=(), ref_videos=(), keep_soundtrack=True,
-                   guide=None, ref_media=(), control=None):
+                   guide=None, ref_media=(), control=None, control2=None, soundtrack=GENERATED_SOUNDTRACK):
     """Before Forge loads the model: check the request and turn Frames into a single H3 generation."""
     p.h3_request = None
     set_pending_error(None)
     try:
         _before_process(p, output, include_audio, audio_shift, ref_audios, ref_videos, keep_soundtrack, guide, ref_media,
-                        control)
+                        control, control2, soundtrack)
     except H3Error as error:
         set_pending_error(error)
         raise
@@ -218,8 +242,9 @@ def validate_img2img(p, mode="fl2va"):
 
 
 def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_videos=(), keep_soundtrack=True, guide=None,
-                    ref_media=(), control=None):
-    p.h3_control = None
+                    ref_media=(), control=None, control2=None, soundtrack=GENERATED_SOUNDTRACK):
+    p.h3_controls = []
+    p.h3_soundtrack = None
     p.h3_last_frame = None
     p.h3_references = []
     p.h3_reference_audios = []
@@ -231,6 +256,8 @@ def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_vi
     from modules import processing, shared
     is_img2img = isinstance(p, processing.StableDiffusionProcessingImg2Img)
     validate_processing(p)
+    if control2 and not control:
+        raise H3Error("The second H3 control uses the Fun ControlNet of the first: select it under Control.")
     overrides = getattr(p, "override_settings", {})
     components = resolve_components(info.filename, module_paths(overrides.get("forge_additional_modules", shared.opts.forge_additional_modules)))
     mode = components.mode
@@ -264,11 +291,25 @@ def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_vi
         p.h3_guide = references.collect_guide(request.guide_index, request.frames, p.width, p.height, guide["video"],
                                               guide["audio"], guide["soundtrack"], ffmpeg)
     if control:
-        p.h3_control = collect_control(control, p.width, p.height, request.frames, ffmpeg)
+        p.h3_controls = [collect_control(control, p.width, p.height, request.frames, ffmpeg)]
+        if control2:
+            # the same Fun ControlNet with another condition; the video above unless it has its own, no inpainting
+            second = {**control2, "model": control["model"], "video": control2["video"] or control["video"],
+                      "mask": None, "source": None}
+            p.h3_controls.append(collect_control(second, p.width, p.height, request.frames, ffmpeg))
         if getattr(p, "cfg_scale", 1.0) != 1.0:
             print(f"[MiniMax H3] the Fun ControlNet is guidance-distilled: use CFG 1 (CFG {p.cfg_scale:g} applies guidance twice)")
+    if request.output == "Video" and soundtrack not in (None, "", GENERATED_SOUNDTRACK):
+        if request.include_audio:
+            # with inpainting only, the video being redrawn
+            control_video = (control["video"] or control["source"]) if control else None
+            p.h3_soundtrack = references.source_soundtrack(soundtrack, p.h3_guide, control_video,
+                                                           ref_videos if mode == "ref2va" else (), ffmpeg)
+        else:
+            print(f"[MiniMax H3] Soundtrack {soundtrack} is not used: the video is written without audio")
     if request.output == "Video":
         find_ffmpeg(ffmpeg)
+    p.h3_soundtrack_choice = soundtrack if p.h3_soundtrack is not None else None
     p.h3_request = request
     p.h3_last_frame = last
     p.h3_references = refs
@@ -290,8 +331,10 @@ def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_vi
         kinds = " and ".join(kind for kind, used in (("frames", p.h3_guide.frames is not None),
                                                       ("audio", p.h3_guide.audio is not None)) if used)
         conditioning += f", guide {kinds} at frame {request.guide_index}"
-    if p.h3_control is not None:
-        conditioning += ", " + control_summary(p.h3_control)
+    if p.h3_controls:
+        conditioning += ", " + control_summary(p.h3_controls)
+    if p.h3_soundtrack is not None:
+        conditioning += f", soundtrack from the {soundtrack.lower()}"
     print(f"[MiniMax H3] {request.output.lower()}: {request.frames} frames at {request.width}x{request.height}, {audio}{conditioning}")
 
 
@@ -318,10 +361,12 @@ def process(p):
         engine.set_keyframes(keyframes.to_tensor(last) if last is not None else None)
     guide = getattr(p, "h3_guide", None)
     engine.set_guide(guide)
-    control = getattr(p, "h3_control", None)
-    engine.set_control(control)
-    if control is not None:
-        p.extra_generation_params.update(control_infotext(control))
+    controls = getattr(p, "h3_controls", [])
+    engine.set_control(controls)
+    if controls:
+        p.extra_generation_params.update(control_infotext(controls))
+    if getattr(p, "h3_soundtrack", None) is not None:
+        p.extra_generation_params["H3 Soundtrack"] = p.h3_soundtrack_choice
     engine.set_audio_shift(request.audio_shift)
     p.extra_generation_params.update({"H3 Variant": "FastH3"} if getattr(p, "h3_fast", False) else {})
     p.extra_generation_params.update({"H3 Mode": "Ref2VA"} if request.mode == "ref2va" else {})
@@ -376,14 +421,17 @@ def _add_control(p):
     """Forge loads the Fun ControlNet next to the DiT for sampling, as its own ControlNet extension does: an extra
     model patcher on this generation's copy of the UNet patcher, with VRAM kept free for the control stream."""
     engine = p.sd_model
-    if getattr(engine.generation, "control", None) is None:
+    controls = getattr(engine.generation, "controls", None)
+    if not controls:
         return
     unet = engine.forge_objects.unet.clone()
     unet.add_extra_model_patcher_during_sampling(engine.control_model[1])
     shapes = engine.generation.shapes
     tokens = shapes.video_size // 24 // 4 + shapes.audio[-1] * 2
-    # the control stream, the hidden state it starts from and one block output, in the DiT's 16-bit compute dtype
-    unet.add_extra_preserved_memory_during_sampling(3 * tokens * unet.model.diffusion_model.hidden_size * 2)
+    # the hidden state the streams start from, then each control stream and one block output of it, in the DiT's
+    # 16-bit compute dtype
+    states = 1 + 2 * len(controls)
+    unet.add_extra_preserved_memory_during_sampling(states * tokens * unet.model.diffusion_model.hidden_size * 2)
     engine.forge_objects.unet = unet
 
 
@@ -436,7 +484,8 @@ def _write_video(p, processed, request, generation):
 
     pixels = generation.frames.clamp(0, 1).mul(255).round().to(torch.uint8)
     frames = [Image.fromarray(np.moveaxis(frame.numpy(), 0, 2)) for frame in pixels]
-    audio = generation.waveform if request.include_audio else None
+    soundtrack = getattr(p, "h3_soundtrack", None)
+    audio = (generation.waveform if soundtrack is None else soundtrack) if request.include_audio else None
     infotext = processed.infotexts[0] if processed.infotexts else processed.info
     directory = Path(p.outpath_samples or shared.opts.outdir_samples or "outputs/h3").resolve()
     target = directory / f"h3-{generation.seed}-{uuid.uuid4().hex[:12]}.mp4"
@@ -450,10 +499,12 @@ def _write_video(p, processed, request, generation):
     Path(output).with_suffix(".json").write_text(json.dumps(sidecar, indent=2), encoding="utf-8")
     processed.video_path = output
     processed.comments += f"H3 video saved to {output}\n"
-    control = getattr(p, "h3_control", None)
-    if control is not None and control.preprocessor and control.frames is not None:
+    for n, control in enumerate(getattr(p, "h3_controls", [])):
+        if not control.preprocessor or control.frames is None:
+            continue
         # what the preprocessor made of the video, to check it against the result
+        suffix = "-control.mp4" if n == 0 else f"-control{n + 1}.mp4"
         guide = export_video([Image.fromarray(frame) for frame in control.frames], None,
-                             Path(output).with_name(Path(output).stem + "-control.mp4"),
+                             Path(output).with_name(Path(output).stem + suffix),
                              ffmpeg=getattr(shared.opts, "h3_ffmpeg_path", ""), cancelled=lambda: shared.state.interrupted)
         processed.comments += f"H3 control video saved to {guide}\n"

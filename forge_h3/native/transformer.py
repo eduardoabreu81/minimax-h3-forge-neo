@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 
 from ..contracts import raise_pending_error
-from . import kernels, lora
+from . import fun_control, kernels, lora
 from .dit import (
     SEGMENT_TAG,
     DiTBlock,
@@ -187,8 +187,8 @@ class MiniMaxH3Model(nn.Module):
                                              + [r["latent"] for r in generation.refs if "latent" in r])
             payload["cond_audio_latents"] = (payload.get("cond_audio_latents", [])
                                              + [r["audio_latent"] for r in generation.refs if r.get("audio_latent") is not None])
-        if generation.control is not None:
-            payload["control"] = generation.control
+        if generation.controls:
+            payload["controls"] = generation.controls
         tags = text_token_tags(text_len, generation.vision_spans)
         if tags is not None:
             payload["text_token_tags"] = tags
@@ -337,10 +337,11 @@ class MiniMaxH3Model(nn.Module):
         # rotation table computed once per forward, consumed by the kitchen split-half rope
         rope_freqs = rope_rotation_table(self.rope_freqs(layout.position_ids, device), dtype)
 
-        control = payload.get("control")
-        if control is not None and control.active(float(sigma_v)):
-            # the Fun ControlNet's stream runs next to its blocks (native/fun_control.py)
-            h = control.apply(self.blocks, h, t_emb, mod_segments, rope_freqs, transformer_options, layout)
+        controls = [run for run in payload.get("controls", ()) if run.active(float(sigma_v))]
+        if controls:
+            # the Fun ControlNet streams run next to its blocks (native/fun_control.py)
+            h = fun_control.apply_controls(controls, self.blocks, h, t_emb, mod_segments, rope_freqs,
+                                           transformer_options, layout)
         else:
             for i, block in enumerate(self.blocks):
                 transformer_options["block_index"] = i

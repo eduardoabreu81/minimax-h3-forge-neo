@@ -172,30 +172,34 @@ class ControlRun:
     def active(self, sigma: float) -> bool:
         return self.strength != 0 and self.sigma_end <= sigma <= self.sigma_start
 
-    def apply(self, blocks, h, t_emb, mod_segments, rope_freqs, transformer_options, layout):
-        """The DiT block loop with the control stream next to it (ComfyUI before_block / after_block)."""
-        layers = self.model.injection_layers
-        # the control blocks run dense: the H3 sparse path keeps statistics per DiT block
-        control_options = sparse.dense_options({k: v for k, v in transformer_options.items()
-                                                if k != "minimax_h3_sparse"})
-        stream = None
-        audio_pos = layout.audio_pos.to(h.device)
-        for i, block in enumerate(blocks):
-            transformer_options["block_index"] = i
-            pristine = h.clone() if i == layers[0] else None
-            h = block(h, t_emb, mod_segments, rope_freqs, transformer_options)
+
+def apply_controls(runs, blocks, h, t_emb, mod_segments, rope_freqs, transformer_options, layout):
+    """The DiT block loop with each active control stream next to it (ComfyUI before_block / after_block). Several
+    runs add their skips into the same blocks, as chained ComfyUI control patches do; each keeps its own stream."""
+    # the control blocks run dense: the H3 sparse path keeps statistics per DiT block
+    control_options = sparse.dense_options({k: v for k, v in transformer_options.items()
+                                            if k != "minimax_h3_sparse"})
+    streams = [None] * len(runs)
+    starts = {run.model.injection_layers[0] for run in runs}
+    audio_pos = layout.audio_pos.to(h.device)
+    for i, block in enumerate(blocks):
+        transformer_options["block_index"] = i
+        pristine = h.clone() if i in starts else None
+        h = block(h, t_emb, mod_segments, rope_freqs, transformer_options)
+        for n, run in enumerate(runs):
+            layers = run.model.injection_layers
             if i not in layers:
                 continue
             index = layers.index(i)
             if index == 0:
-                self.hint = self.hint.to(h.device)
-                stream = self.model.init_stream(pristine, self.hint, layout, t_emb)
-                del pristine
+                run.hint = run.hint.to(h.device)
+                streams[n] = run.model.init_stream(pristine, run.hint, layout, t_emb)
             control_options["block_index"] = i
-            stream, skip = self.model.step(index, stream, t_emb, mod_segments, rope_freqs, control_options)
+            streams[n], skip = run.model.step(index, streams[n], t_emb, mod_segments, rope_freqs, control_options)
             skip[audio_pos] = 0
-            h.add_(skip, alpha=self.strength)
-        return h
+            h.add_(skip, alpha=run.strength)
+        del pristine
+    return h
 
 
 def load(path: str):

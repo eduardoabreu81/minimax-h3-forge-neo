@@ -17,7 +17,9 @@ from PIL import Image
 
 from . import keyframes
 from .contracts import (
+    FPS,
     FRAME_STEP,
+    GENERATED_SOUNDTRACK,
     MAX_REF_AUDIO_SECONDS,
     MAX_REF_AUDIOS,
     MAX_REF_VIDEO_SECONDS,
@@ -27,9 +29,10 @@ from .contracts import (
     MIN_REF_AUDIO_SECONDS,
     MIN_REF_VIDEO_SECONDS,
     SAMPLE_RATE,
+    SOUNDTRACKS,
     H3Error,
 )
-from .media import media_kind, probe_video, read_audio, read_video
+from .media import delay_audio, media_kind, probe_video, read_audio, read_video
 
 CANVAS_MULTIPLE = 32
 # ComfyUI adapt_canvas: reference videos go to a 768 short edge, at most 768 x 1344 pixels
@@ -170,6 +173,26 @@ def collect_guide(index: int, clip_frames: int, width: int, height: int, video=N
     if audio:
         sound = read_audio(audio, ffmpeg)
     return Guide(index, frames, sound)
+
+
+def source_soundtrack(choice, guide=None, control_video=None, reference_videos=(), ffmpeg=""):
+    """The MP4's sound when it is not H3's own (contracts.SOUNDTRACKS), stereo [2, samples] at 32 kHz: the guide's
+    audio from its frame on, or the original sound of the control video or the first reference video from the clip's
+    start, which both give the clip their first frames. None for the generated audio."""
+    if choice in (None, "", GENERATED_SOUNDTRACK):
+        return None
+    if choice not in SOUNDTRACKS:
+        raise H3Error(f"Unknown H3 soundtrack {choice!r}; choose one of: {', '.join(SOUNDTRACKS)}.")
+    if choice == "Guide":
+        if guide is None or guide.audio is None:
+            raise H3Error("Soundtrack Guide needs a guide audio, or a guide video with sound and its soundtrack on.")
+        return delay_audio(guide.audio, round(guide.index / FPS * SAMPLE_RATE))
+    path = control_video if choice == "Control video" else next(iter(reference_videos or ()), None)
+    if not path:
+        raise H3Error(f"Soundtrack {choice} needs {'a control video' if choice == 'Control video' else 'a reference video'}.")
+    if not probe_video(path, ffmpeg).has_audio:
+        raise H3Error(f"Soundtrack {choice}: {Path(path).name} has no sound.")
+    return read_audio(path, ffmpeg)
 
 
 def prepare(image, clip_width: int, clip_height: int):

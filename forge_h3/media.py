@@ -54,6 +54,12 @@ def read_audio(path, ffmpeg=""):
     return np.clip(samples.reshape(-1, 2).T, -1.0, 1.0).copy()
 
 
+def delay_audio(audio, samples: int):
+    """Stereo audio [2, n] starting samples later, silence before it."""
+    audio = np.asarray(audio, dtype=np.float32)
+    return np.concatenate([np.zeros((audio.shape[0], samples), dtype=np.float32), audio], axis=1)
+
+
 @dataclass(frozen=True)
 class VideoInfo:
     width: int

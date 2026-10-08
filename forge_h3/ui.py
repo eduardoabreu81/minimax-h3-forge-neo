@@ -11,10 +11,11 @@ from .contracts import (
     FPS,
     MAX_REF_AUDIOS,
     MAX_REF_VIDEOS,
+    SOUNDTRACKS,
     H3Error,
 )
 from .control import PREPROCESSORS
-from .integration import checkpoint_info
+from .integration import CONTROL2_OFF, checkpoint_info
 from .models import ROLE_LABELS, inspect_model
 from .ui_state import frame_view, preset_frame_view
 
@@ -67,6 +68,10 @@ class Panel:
             # the audio stream's own flow shift; Shift (the h3 preset slider) is the video one
             self.audio_shift = gr.Slider(minimum=1.0, maximum=20.0, step=0.5, value=AUDIO_SHIFT, label="Audio shift",
                                          elem_id=f"{self.tab}_h3_audio_shift")
+            self.soundtrack = gr.Dropdown(choices=list(SOUNDTRACKS), value=SOUNDTRACKS[0], label="Soundtrack",
+                                          info="H3 always makes new audio; a guide or a reference video only steers "
+                                               "it. Pick a source to keep its original sound in the video instead.",
+                                          elem_id=f"{self.tab}_h3_soundtrack")
             if is_img2img:
                 gr.Markdown("With an FL2VA checkpoint the input image is the **first frame**; for a **last frame** too, add "
                             "one image to the **ImageStitch Integrated** gallery. With a **Ref2VA** checkpoint the input "
@@ -126,6 +131,21 @@ class Panel:
                                                    elem_id=f"{self.tab}_h3_control_start")
                     self.control_end = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, value=1.0, label="End",
                                                  elem_id=f"{self.tab}_h3_control_end")
+                with gr.Accordion("Second control", open=False, elem_id=f"{self.tab}_h3_control2"):
+                    gr.Markdown("Another condition through the same Fun ControlNet, from the control video above unless "
+                                "you add one here, for example pose 0.7 with depth 0.3. The two add up: keep their "
+                                "strengths around 1 in total.")
+                    self.control2_video = gr.Video(sources=["upload"], label="Control video (optional)",
+                                                   elem_id=f"{self.tab}_h3_control2_video")
+                    self.preprocessor2 = gr.Dropdown(choices=[CONTROL2_OFF] + list(PREPROCESSORS), value=CONTROL2_OFF,
+                                                     label="Preprocessor", elem_id=f"{self.tab}_h3_control2_preprocessor")
+                    with gr.Row():
+                        self.control2_strength = gr.Slider(minimum=0.0, maximum=2.0, step=0.05, value=0.3,
+                                                           label="Strength", elem_id=f"{self.tab}_h3_control2_strength")
+                        self.control2_start = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, value=0.0, label="Start",
+                                                        elem_id=f"{self.tab}_h3_control2_start")
+                        self.control2_end = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, value=1.0, label="End",
+                                                      elem_id=f"{self.tab}_h3_control2_end")
                 refresh.click(control_choices, outputs=[self.control_model], queue=False, show_progress=False)
             self.status = gr.Markdown("Select the H3 text encoder, video VAE and audio VAE in VAE / Text Encoder.")
             with gr.Accordion("Components", open=False):
@@ -140,7 +160,8 @@ class Panel:
         return [self.output, self.audio, self.audio_shift, self.ref_media, self.keep_soundtrack, self.guide_video,
                 self.guide_soundtrack, self.guide_audio, self.guide_frame, self.control_model, self.control_video,
                 self.preprocessor, self.control_mask, self.control_source, self.control_strength, self.control_start,
-                self.control_end]
+                self.control_end, self.control2_video, self.preprocessor2, self.control2_strength, self.control2_start,
+                self.control2_end, self.soundtrack]
 
     @property
     def needed(self):
@@ -168,8 +189,8 @@ class Panel:
                      if hasattr(c, key)} for c in native]
         preset_input = [preset] if preset is not None else []
         inputs = [checkpoint, self.output, modules, self.saved] + native + preset_input
-        outputs = ([self.accordion, self.audio, self.audio_shift, duration, self.status, self.summary, self.saved,
-                    self.reference_media] + native + preset_input)
+        outputs = ([self.accordion, self.audio, self.audio_shift, self.soundtrack, duration, self.status, self.summary,
+                    self.saved, self.reference_media] + native + preset_input)
 
         def update(value, output, module_values, saved, *values):
             preset_value = values[-1] if preset is not None else None
@@ -224,7 +245,7 @@ class Panel:
                     error = str(exc)
             status = html.escape(error) if error else ("H3 generates audio jointly. This checkbox controls audio in the exported video." if output == "Video" else "Still image uses the first frame of a 5-frame H3 generation.")
             return [gr.update(visible=active), gr.update(visible=active and output == "Video"),
-                    gr.update(visible=active and output == "Video"),
+                    gr.update(visible=active and output == "Video"), gr.update(visible=active and output == "Video"),
                     gr.update(value=f"{frames} frames / {FPS} FPS = {frames / FPS:.2f} seconds" if active else "",
                               visible=active and output == "Video"), status, summary, saved,
                     gr.update(visible=active and ref2va)] + updates + (
