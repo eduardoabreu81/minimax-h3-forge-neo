@@ -19,11 +19,17 @@ from backend.patcher.unet import UnetPatcher
 from backend.patcher.vae import VAE
 
 from ..contracts import FPS, H3Error, raise_pending_error
-from . import fun_control
-from .layout import FRAME_RESCALE
+from . import dit, fun_control
+from .layout import FRAME_RESCALE, prompt_memory
 from .model import AUDIO_SHIFT, VIDEO_SHIFT, MiniMaxH3
 from .streams import Generation, stream_shapes
 from .text_engine import MiniMaxH3TextEngine
+
+
+def encode_memory(shape, dtype) -> int:
+    """Working memory to keep free for one video encode, [1, 3, T, h, w]: the clips go to the GPU one at a time,
+    so it depends on the frame size only (Forge's figure for its temporal video VAEs, Wan's)."""
+    return 6000 * shape[-2] * shape[-1] * memory_management.dtype_size(dtype)
 
 
 def _video_vae_dtype() -> torch.dtype:
@@ -144,6 +150,16 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         self.audio_shift = float(shift)
         self.forge_objects.unet.model.diffusion_model.sigma_shift_audio = self.audio_shift
 
+    def pdd_heads(self) -> int:
+        """The PDD heads this generation's LoRAs give the DiT's output projection (alibaba-pai's Acc LoRAs in Kijai's
+        ComfyUI conversion), 1 without one; read from the UNet patcher, before Forge applies the patches."""
+        unet = self.forge_objects.unet
+        key = "diffusion_model.final_layer.video_out.weight"
+        patches = list(getattr(unet, "patches", {}).get(key, ()))
+        for function in getattr(unet, "weight_wrapper_patches", {}).get(key, ()):
+            patches += getattr(function, "patch", [])
+        return dit.bank_size(patches, unet.model.diffusion_model.final_layer.video_dim)
+
     def prepare(self, frames: int, width: int, height: int, seed: int) -> tuple[int, ...]:
         """Start a generation: remember its shapes; returns the shape of the packed latent (without the batch)."""
         shapes = stream_shapes(frames, width, height)
@@ -203,7 +219,11 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         if not images:
             return []
         video_vae = self.forge_objects.vae
-        memory_management.load_model_gpu(video_vae.patcher)
+        # the largest picture's working memory too: with the text encoder and the DiT resident, a 1536x1024 sheet left
+        # the VAE's attention to fall back to slices (session 11)
+        largest = max(images, key=lambda image: image.shape[1] * image.shape[2])
+        memory_management.load_models_gpu([video_vae.patcher],
+                                          memory_required=encode_memory(largest.shape[:3], video_vae.vae_dtype))
         latents = []
         for image in images:
             pixels = image.movedim(-1, 1).unsqueeze(2).mul(2.0).sub(1.0)  # [1, 3, 1, h, w] in [-1, 1]
@@ -215,12 +235,15 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
     def _encode_video(self, frames) -> torch.Tensor:
         # all the frames of one video, [1, 24, 5n + 2, h/16, w/16] (ComfyUI vae.encode of the frame batch); uint8
         # frames [T, h, w, 3], or float ones in [0, 1]
+        # the frames stay on the CPU and go to the GPU one temporal clip at a time (encode_temporal); Forge frees room
+        # for the encoder's working memory too, not only its weights: with the DiT and the text encoder still
+        # resident, a 768x1344 control clip ran out of memory (session 11)
         video_vae = self.forge_objects.vae
-        memory_management.load_model_gpu(video_vae.patcher)
-        pixels = torch.as_tensor(frames).to(video_vae.device).movedim(-1, 0).unsqueeze(0)  # [1, 3, T, h, w]
+        pixels = torch.as_tensor(frames).movedim(-1, 0).unsqueeze(0)  # [1, 3, T, h, w]
+        memory_management.load_models_gpu([video_vae.patcher], memory_required=encode_memory(pixels.shape, video_vae.vae_dtype))
         scale = 127.5 if pixels.dtype == torch.uint8 else 0.5
         pixels = pixels.to(video_vae.vae_dtype).div(scale).sub(1.0)
-        return video_vae.first_stage_model.encode(pixels).float().cpu()
+        return video_vae.first_stage_model.encode(pixels, device=video_vae.device).float().cpu()
 
     def _encode_guide(self, guide, shapes) -> dict:
         # ComfyUI MiniMaxH3AddGuide: the frames as one clip, the audio cut to the clip's audio left after the anchor
@@ -261,10 +284,14 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
     @torch.inference_mode()
     def get_learned_conditioning(self, prompt: list[str]):
         raise_pending_error()
-        memory_management.load_model_gpu(self.forge_objects.clip.patcher)
+        images, videos = self.condition_images(), self.video_presentations()
+        # room for the activations too: a reference video's vision tokens did not fit next to the resident DiT
+        pictures = [tuple(image.shape[-3:-1]) for image in images]
+        blocks = [tuple(video["frames"].shape[1:3]) for video in videos for _ in range(0, video["frames"].shape[0], 2)]
+        memory_management.load_models_gpu([self.forge_objects.clip.patcher],
+                                          memory_required=prompt_memory(pictures, blocks))
         # the same pictures and audio labels for the prompt and the negative prompt: they come before either text
-        return self.text_processing_engine_h3(prompt, images=self.condition_images(), audios=len(self.reference_audios),
-                                              videos=self.video_presentations())
+        return self.text_processing_engine_h3(prompt, images=images, audios=len(self.reference_audios), videos=videos)
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt: str) -> tuple[int, int]:

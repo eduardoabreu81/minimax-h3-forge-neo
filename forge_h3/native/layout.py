@@ -12,6 +12,9 @@ FRAME_PER_TOKEN = (1, 4, 4, 4, 4)
 FRAME_RESCALE = 5.0 / 3.0
 VISUAL_COND_TIMESTEP = 0.999
 AUDIO_COND_TIMESTEP = 1.0
+# the 32B text encoder (text_encoder.py Qwen3VL_32BConfig)
+QWEN_HIDDEN = 5120
+QWEN_INTERMEDIATE = 25600
 
 
 def time_shift_sigma(sigma, from_shift, to_shift):
@@ -216,3 +219,28 @@ class PackedLayout:
             b.add("ref_img", _video_grid(vt, r_frame, cursor), "image", False)
             return cursor + max(float(rt), sum(_video_t_spans(vt)))
         return cursor
+
+
+def vision_size(height: int, width: int, factor=32, min_pixels=3136, max_pixels=12845056) -> tuple[int, int]:
+    """Qwen's resize of a picture or a frame pair: multiples of patch x merge (32), within the pixel budget."""
+    h_bar, w_bar = round(height / factor) * factor, round(width / factor) * factor
+    if h_bar * w_bar > max_pixels:
+        beta = math.sqrt((height * width) / max_pixels)
+        h_bar = max(factor, math.floor(height / beta / factor) * factor)
+        w_bar = max(factor, math.floor(width / beta / factor) * factor)
+    elif h_bar * w_bar < min_pixels:
+        beta = math.sqrt(min_pixels / (height * width))
+        h_bar, w_bar = math.ceil(height * beta / factor) * factor, math.ceil(width * beta / factor) * factor
+    return h_bar, w_bar
+
+
+def prompt_memory(pictures: list[tuple[int, int]], video_blocks: list[tuple[int, int]]) -> int:
+    """Working memory to keep free for one prompt pass of the 32B encoder, given the (height, width) of each picture
+    and of each two-frame video block: one merged vision token per 32x32 pixels, ~2000 for a 1080x1920 block, and
+    every token carries the bf16 MLP and the fp32 residual stream. A 5 s 1080x1920 reference video makes ~12k tokens,
+    ~4 GB, which the default reserve left short with the DiT still resident (session 11)."""
+    tokens = 1024 + len(video_blocks) * 8  # the prompt text and the time labels
+    for height, width in [*pictures, *video_blocks]:
+        h_bar, w_bar = vision_size(height, width)
+        tokens += h_bar * w_bar // 1024
+    return tokens * (QWEN_INTERMEDIATE * 8 + QWEN_HIDDEN * 32)

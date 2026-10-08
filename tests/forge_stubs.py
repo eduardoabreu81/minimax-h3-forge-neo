@@ -41,6 +41,7 @@ def engine_modules():
     """Everything forge_h3.native.engine imports from Forge Neo and huggingface_guess."""
     stubs = text_processing()
     memory = module("backend.memory_management", load_model_gpu=lambda patcher: None,
+                    load_models_gpu=lambda patchers, memory_required=0: None, dtype_size=lambda dtype: 2,
                     should_use_fp16=lambda device: False, vae_device=lambda: "cpu")
     base = module("backend.diffusion_engine.base", ForgeDiffusionEngine=type("ForgeDiffusionEngine", (), {
                       # Forge Neo's own: the shift goes to the predictor

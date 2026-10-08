@@ -121,26 +121,34 @@ def split_media(paths, ffmpeg="") -> tuple[list, list]:
 
 def collect_videos(paths, clip_frames: int, keep_soundtrack=True, ffmpeg="") -> list[ReferenceVideo]:
     """The reference videos of a request, in <Video k> order; the empty slots of the panel are skipped. MiniMax's
-    limits: up to 3 videos, each 2 to 15 seconds, 15 seconds in all. As in ComfyUI, a video longer than the clip keeps
-    its first clip_frames frames (then 17n + 5 of them) and its whole soundtrack."""
+    limits: up to 3 videos, each at least 2 seconds, 15 seconds in all. A longer video is cut, not refused: each one
+    keeps its first seconds that still fit in the 15, frames and soundtrack alike. As in ComfyUI, a video longer than
+    the clip keeps its first clip_frames frames (then 17n + 5 of them)."""
     paths = [path for path in paths or () if path]
     if len(paths) > MAX_REF_VIDEOS:
         raise H3Error(f"H3 Ref2VA takes up to {MAX_REF_VIDEOS} reference videos; {len(paths)} were given.")
     infos = [probe_video(path, ffmpeg) for path in paths]
     for path, info in zip(paths, infos):
-        if not MIN_REF_VIDEO_SECONDS <= info.seconds <= MAX_REF_VIDEO_SECONDS:
-            raise H3Error(f"H3 reference videos must last {MIN_REF_VIDEO_SECONDS:g} to {MAX_REF_VIDEO_SECONDS:g} "
-                          f"seconds; {Path(path).name} lasts {info.seconds:.1f}.")
-    total = sum(info.seconds for info in infos)
-    if total > MAX_REF_VIDEO_SECONDS:
-        raise H3Error(f"H3 reference videos may last {MAX_REF_VIDEO_SECONDS:g} seconds in all; these last {total:.1f}.")
-    videos = []
+        if info.seconds < MIN_REF_VIDEO_SECONDS:
+            raise H3Error(f"H3 reference videos must last at least {MIN_REF_VIDEO_SECONDS:g} seconds; "
+                          f"{Path(path).name} lasts {info.seconds:.1f}.")
+    videos, left = [], MAX_REF_VIDEO_SECONDS
     for path, info in zip(paths, infos):
-        frames = read_video(path, *video_canvas(info.width, info.height), clip_frames, ffmpeg)
+        seconds = min(info.seconds, left)
+        if seconds < MIN_REF_VIDEO_SECONDS:
+            raise H3Error(f"H3 reference videos may last {MAX_REF_VIDEO_SECONDS:g} seconds in all; "
+                          f"{Path(path).name} would get {seconds:.1f} of them, less than {MIN_REF_VIDEO_SECONDS:g}.")
+        if seconds < info.seconds:
+            print(f"[MiniMax H3] {Path(path).name} lasts {info.seconds:.2f} s: H3 uses its first {seconds:.2f} s "
+                  f"(reference videos may last {MAX_REF_VIDEO_SECONDS:g} s in all)")
+        left -= seconds
+        frames = read_video(path, *video_canvas(info.width, info.height), min(clip_frames, math.floor(seconds * FPS)), ffmpeg)
         count = grid_frames(len(frames))
         if not count:
             raise H3Error(f"{Path(path).name} gave {len(frames)} frames; an H3 reference video needs at least {MIN_FRAMES}.")
         soundtrack = read_audio(path, ffmpeg) if keep_soundtrack and info.has_audio else None
+        if soundtrack is not None:
+            soundtrack = soundtrack[:, :round(seconds * SAMPLE_RATE)]
         videos.append(ReferenceVideo(frames[:count], soundtrack))
     return videos
 

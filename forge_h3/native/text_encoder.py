@@ -8,7 +8,6 @@ extension, where the same Qwen3-VL family is used at 8B). Ref2VA reference video
 (ComfyUI comfy/text_encoders/minimax.py process_video_block).
 """
 
-import math
 from dataclasses import asdict, dataclass
 
 import torch
@@ -17,6 +16,8 @@ import torch.nn.functional as F
 from backend.nn.llm import llama, qwen35
 from backend.nn.llm.llama import Llama2_, Qwen3VL, Qwen3VL_4BConfig
 from backend.nn.llm.qwen35 import Qwen3VLVisionModel
+
+from .layout import vision_size
 
 VISION_KEYS = ("hidden_size", "intermediate_size", "depth", "num_heads", "num_position_embeddings", "deepstack_visual_indexes")
 # Forge Neo's Qwen3VL image normalization
@@ -33,20 +34,11 @@ def vision_defaults() -> dict:
     return {**common, **qwen35.QWEN3VL_VISION["qwen3vl_8b"]}
 
 
-def process_video_block(frames: torch.Tensor, patch_size=16, temporal_patch_size=2, merge_size=2, min_pixels=3136,
-                        max_pixels=12845056) -> tuple[torch.Tensor, torch.Tensor]:
+def process_video_block(frames: torch.Tensor, patch_size=16, temporal_patch_size=2, merge_size=2) -> tuple[torch.Tensor, torch.Tensor]:
     """A [2, H, W, 3] frame pair in [0, 1] -> (flatten_patches, grid_thw) with grid_t = 1: the resize and
     normalization of an image, but the two frames fill the temporal patch instead of one frame repeated."""
     _, height, width, _ = frames.shape
-    factor = patch_size * merge_size
-    h_bar, w_bar = round(height / factor) * factor, round(width / factor) * factor
-    if h_bar * w_bar > max_pixels:
-        beta = math.sqrt((height * width) / max_pixels)
-        h_bar = max(factor, math.floor(height / beta / factor) * factor)
-        w_bar = max(factor, math.floor(width / beta / factor) * factor)
-    elif h_bar * w_bar < min_pixels:
-        beta = math.sqrt(min_pixels / (height * width))
-        h_bar, w_bar = math.ceil(height * beta / factor) * factor, math.ceil(width * beta / factor) * factor
+    h_bar, w_bar = vision_size(height, width, patch_size * merge_size)
     images = F.interpolate(frames.permute(0, 3, 1, 2).float(), size=(h_bar, w_bar), mode="bilinear", align_corners=False)
     mean = torch.tensor(QWEN_IMAGE_MEAN, device=images.device).view(1, 3, 1, 1)
     std = torch.tensor(QWEN_IMAGE_STD, device=images.device).view(1, 3, 1, 1)

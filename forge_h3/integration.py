@@ -406,6 +406,8 @@ def before_sampling(p, noise):
     shape = p.sd_model.prepare(request.frames, request.width, request.height, int(p.seeds[0]))
     _set_sparse_attention(p)
     _add_control(p)
+    _reserve_references(p)
+    _note_pdd(p)
     # Forge made p.rng for an image latent; the samplers that add noise on the way (ancestral, SDE, res_multistep)
     # draw from it too, so it has to give the packed shape
     p.rng = rng.ImageRNG(shape, p.seeds, subseeds=p.subseeds, subseed_strength=p.subseed_strength,
@@ -415,6 +417,18 @@ def before_sampling(p, noise):
         # img2img samples from init_latent at full denoise; the packed start is pure noise
         p.init_latent = torch.zeros_like(p.modified_noise)
     patches.begin_sampling()
+
+
+def _note_pdd(p):
+    """An Acc LoRA (alibaba-pai's PDD, Kijai's ComfyUI conversion) brings a bank of output heads, one per stretch of
+    the schedule; each step blends the heads it spans for one Euler step, so other samplers mix its velocities."""
+    heads = p.sd_model.pdd_heads()
+    if heads == 1:
+        return
+    p.extra_generation_params["H3 PDD heads"] = heads
+    if p.sampler_name != "Euler":
+        print(f"[MiniMax H3] Acc (PDD) LoRA with {heads} heads: it is made for the Euler sampler and its step count "
+              f"(8 for the Acc 8-Step LoRAs); {p.sampler_name} mixes its velocities")
 
 
 def _add_control(p):
@@ -432,6 +446,22 @@ def _add_control(p):
     # 16-bit compute dtype
     states = 1 + 2 * len(controls)
     unet.add_extra_preserved_memory_during_sampling(states * tokens * unet.model.diffusion_model.hidden_size * 2)
+    engine.forge_objects.unet = unet
+
+
+def _reserve_references(p):
+    """Forge sizes the sampling memory from the packed latent alone, but Ref2VA's reference pictures, videos and their
+    audio join the DiT sequence too: a 15 s reference video at 768x1344 doubles it (session 11 ran out of memory in the
+    MLP). Their latents are reserved with Forge's own estimate, on this generation's copy of the UNet patcher."""
+    engine = p.sd_model
+    refs = getattr(engine.generation, "refs", None) or []
+    elements = sum(ref[key].numel() for ref in refs for key in ("latent", "audio_latent") if ref.get(key) is not None)
+    if not elements:
+        return
+    from modules import shared
+    unet = engine.forge_objects.unet.clone()
+    batch = 2 if getattr(shared, "batch_cond_uncond", True) else 1
+    unet.add_extra_preserved_memory_during_sampling(int(unet.model.memory_required([batch, 1, elements])))
     engine.forge_objects.unet = unet
 
 

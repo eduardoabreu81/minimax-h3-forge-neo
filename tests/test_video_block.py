@@ -60,5 +60,15 @@ class VideoBlockTests(unittest.TestCase):
         self.assertEqual(grid.tolist(), [[1, 4, 4]])  # 64 x 64 after rounding
 
 
+    def test_the_prompt_reserve_grows_with_the_reference_video(self):
+        # a 1080x1920 frame pair is 34 x 60 merged tokens; 6 blocks (5 s at 2 FPS) need ~4 GB on top of the weights
+        from forge_h3.native.layout import prompt_memory
+        per_token = prompt_memory([], [(1080, 1920)]) - prompt_memory([], [])
+        self.assertEqual(per_token, (34 * 60 + 8) * (25600 * 8 + 5120 * 32))
+        video = prompt_memory([(1024, 1536)], [(1080, 1920)] * 6)
+        self.assertGreater(video, 4 * 1024 ** 3)
+        self.assertLess(prompt_memory([], []), 1024 ** 3)  # a text prompt keeps the default reserve
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -5,6 +5,7 @@ encodes the input image through encode_first_stage), p.setup_conds (get_learned_
 process_before_every_sampling. Forge itself is replaced by forge_stubs and the fakes below.
 """
 
+import math
 import sys
 import tempfile
 import types
@@ -60,6 +61,23 @@ class Img2Img(Txt2Img):
         super().__init__(gallery, references)
         self.init_images = [Image.new("RGB", (50, 50), "red")] if init else []
         self.resize_mode, self.denoising_strength = 0, 0.75
+
+
+class FakeUnetPatcher:
+    """Forge's UnetPatcher, as far as a script reserves sampling memory: each clone keeps the memory asked so far."""
+    def __init__(self, model, memory=0):
+        self.model, self.extra_preserved_memory_during_sampling = model, memory
+
+    def clone(self):
+        return FakeUnetPatcher(self.model, self.extra_preserved_memory_during_sampling)
+
+    def add_extra_preserved_memory_during_sampling(self, size):
+        self.extra_preserved_memory_during_sampling += size
+
+
+def forge_memory_estimate(shape):
+    # Forge Neo's KModel.memory_required with H3's memory_usage_factor, in a 16-bit compute dtype
+    return shape[0] * math.prod(shape[2:]) * 2 * 0.02 * 0.057 * 1024 * 1024
 
 
 class FakeTextEngine:
@@ -138,8 +156,9 @@ class FlowTests(unittest.TestCase):
         engine.forge_objects = types.SimpleNamespace(
             vae=types.SimpleNamespace(patcher=None, device="cpu", vae_dtype=torch.float32,
                                       first_stage_model=video_vae.requires_grad_(False)),
-            unet=types.SimpleNamespace(model=types.SimpleNamespace(
-                diffusion_model=dit, predictor=types.SimpleNamespace(percent_to_sigma=lambda percent: 1.0 - percent))),
+            unet=FakeUnetPatcher(types.SimpleNamespace(
+                diffusion_model=dit, predictor=types.SimpleNamespace(percent_to_sigma=lambda percent: 1.0 - percent),
+                memory_required=forge_memory_estimate)),
             clip=types.SimpleNamespace(patcher=None))
         engine.audio_vae = types.SimpleNamespace(patcher=None, device="cpu", first_stage_model=audio_vae.requires_grad_(False))
         engine.text_processing_engine_h3 = FakeTextEngine()
@@ -377,6 +396,10 @@ class FlowTests(unittest.TestCase):
         video = refs[1]
         self.assertEqual((video["latent_t"], video["latent_h"], video["latent_w"]), (12, 2, 2))
         self.assertEqual(tuple(video["latent"].shape), (1, 24, 12, 2, 2))
+        # the references join the DiT sequence, so their latents are reserved as Forge reserves the packed one
+        elements = sum(r[key].numel() for r in refs for key in ("latent", "audio_latent") if r.get(key) is not None)
+        self.assertAlmostEqual(self.engine.forge_objects.unet.extra_preserved_memory_during_sampling,
+                               int(forge_memory_estimate([2, 1, elements])), delta=1)
         self.assertEqual((video["ref_audio_t"], tuple(video["audio_latent"].shape)), (120, (1, 32, 2, 120)))
         # Qwen sees one frame every half second, the soundtrack label first
         (shown,) = self.engine.text_processing_engine_h3.videos
@@ -390,19 +413,38 @@ class FlowTests(unittest.TestCase):
         self.assertEqual([k for _, _, k in layout.segments],
                          ["text", "ref_img", "ref_audio", "ref_img", "ref_audio", "audio", "video"])
 
+    def test_a_long_reference_video_keeps_its_first_fifteen_seconds(self):
+        # frames and soundtrack alike: a 15.04 s file (an AAC re-encode of a 15 s clip) or a whole song video
+        self.use_ref2va()
+        probe, read, sound = self.fake_videos({"song.mp4": (64, 64, 40.0, True)})
+        with probe, read, sound:
+            p = Txt2Img()
+            p.batch_size = 362
+            integration.before_process(p, "Video", True, 3.0, (), ("song.mp4",))
+        (video,) = p.h3_reference_videos
+        self.assertEqual((video.frames.shape[0], video.soundtrack.shape[-1]), (345, 15 * 32000))
+
     def test_reference_video_without_soundtrack_and_its_errors(self):
         self.use_ref2va()
         p = Txt2Img()
         probe, read, sound = self.fake_videos({"a.mp4": (64, 64, 2.5, True), "b.mp4": (64, 64, 10.0, False),
-                                               "long.mp4": (64, 64, 16.0, False), "tiny.mp4": (64, 64, 2.0, False)})
+                                               "long.mp4": (64, 64, 16.0, False), "tiny.mp4": (64, 64, 2.0, False),
+                                               "short.mp4": (64, 64, 1.5, False)})
         with probe, read, sound:
             self.run_until_sampling(p, ref_videos=("a.mp4",), keep_soundtrack=False)
             self.assertEqual([r["kind"] for r in self.engine.generation.refs], ["video"])
             self.assertFalse(self.engine.text_processing_engine_h3.videos[0]["soundtrack"])
-            with self.assertRaisesRegex(H3Error, "long.mp4 lasts 16.0"):
-                integration.before_process(Txt2Img(), "Video", True, 3.0, (), ("long.mp4",))
-            with self.assertRaisesRegex(H3Error, "15 seconds in all; these last 22.5"):
-                integration.before_process(Txt2Img(), "Video", True, 3.0, (), ("b.mp4", "a.mp4", "b.mp4"))
+            # longer videos are cut to what still fits in the 15 s, not refused
+            p = Txt2Img()
+            integration.before_process(p, "Video", True, 3.0, (), ("long.mp4",))
+            self.assertEqual(len(p.h3_reference_videos), 1)
+            p = Txt2Img()
+            integration.before_process(p, "Video", True, 3.0, (), ("b.mp4", "a.mp4", "b.mp4"))  # 10 + 2.5 + 2.5 s
+            self.assertEqual(len(p.h3_reference_videos), 3)
+            with self.assertRaisesRegex(H3Error, r"15 seconds in all; a.mp4 would get 0.0 of them"):
+                integration.before_process(Txt2Img(), "Video", True, 3.0, (), ("b.mp4", "b.mp4", "a.mp4"))
+            with self.assertRaisesRegex(H3Error, r"at least 2 seconds; short.mp4 lasts 1.5"):
+                integration.before_process(Txt2Img(), "Video", True, 3.0, (), ("short.mp4",))
             # a 5-frame Still image cuts every reference video to 5 frames
             p = Txt2Img()
             integration.before_process(p, "Still image", True, 3.0, (), ("tiny.mp4",))
