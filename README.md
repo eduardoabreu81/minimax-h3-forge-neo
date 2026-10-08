@@ -3,7 +3,7 @@
 <div align="center">
 
 [![Forge Neo](https://img.shields.io/badge/Forge-Neo-blue)](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)
-[![Version](https://img.shields.io/badge/Version-0.6.0-brightgreen)](https://github.com/eduardoabreu81/minimax-h3-forge-neo)
+[![Version](https://img.shields.io/badge/Version-0.6.1-brightgreen)](https://github.com/eduardoabreu81/minimax-h3-forge-neo)
 ![Status](https://img.shields.io/badge/Status-Work_in_progress-orange)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-green)](LICENSE)
 
@@ -41,6 +41,10 @@ Generate **videos with sound** with **[MiniMax H3](https://github.com/MiniMax-AI
 ---
 
 ## 🆕 What's New
+
+### v0.6.1 - Works with Today's Forge Neo
+
+- **Fix** for Forge Neo's Qwen-Image 2.1 update: H3 failed to load with `Qwen3VL32B.__init__() got an unexpected keyword argument 'model_type'` ([#1](https://github.com/eduardoabreu81/minimax-h3-forge-neo/issues/1)). Update the extension; older Forge Neo versions keep working too.
 
 ### v0.6.0 - Reference Pictures and 16 GB Cards
 

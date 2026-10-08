@@ -93,7 +93,8 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         """The pictures the text encoder sees before the prompt as "<Picture i>": the references or the keyframes."""
         return list(self.references) if self.mode == "ref2va" else self.keyframe_images()
 
-    def set_shift(self, shift):
+    def set_shift(self, shift, *args, **kwargs):
+        # Forge Neo after d70373e also passes the size (width, height); H3's shift does not depend on it
         shift = float(shift) if shift and shift > 0 else VIDEO_SHIFT
         super().set_shift(shift)
         self.video_shift = shift
