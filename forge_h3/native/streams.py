@@ -75,5 +75,7 @@ class Generation:
     vision_spans: list = field(default_factory=list)
     # H3's sparse attention for this request (native/sparse.py), when Sparse Attention Integrated is on
     sparse: object | None = None
+    # the Fun ControlNet runs of this request (fun_control.ControlRun), when the H3 panel's Control has a model and a video
+    controls: list = field(default_factory=list)
     frames: torch.Tensor | None = None    # [T, 3, H, W] float in [0, 1], after decoding
     waveform: torch.Tensor | None = None  # [2, samples] float in [-1, 1], after decoding

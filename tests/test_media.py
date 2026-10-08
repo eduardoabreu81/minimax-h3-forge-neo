@@ -10,7 +10,14 @@ import numpy as np
 from PIL import Image
 
 from forge_h3.contracts import H3Error
-from forge_h3.media import export_still, export_video
+from forge_h3.media import (
+    export_still,
+    export_video,
+    media_kind,
+    probe_video,
+    read_audio,
+    read_video,
+)
 
 
 @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg/FFprobe required")
@@ -65,6 +72,87 @@ class ExportTests(unittest.TestCase):
         with Image.open(path) as image:
             self.assertEqual(image.size, (64, 64))
             self.assertEqual(image.info["parameters"], "Seed: 123, H3 Frames: 5")
+
+
+@unittest.skipUnless(shutil.which("ffmpeg"), "FFmpeg required")
+class ReadAudioTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def test_mono_16khz_becomes_stereo_32khz(self):
+        import wave
+        path = self.root / "voice.wav"
+        t = np.arange(16000 * 5 // 2) / 16000
+        pcm = (np.sin(t * 440 * 2 * np.pi) * 0.5 * 32767).astype("<i2")
+        with wave.open(str(path), "wb") as writer:
+            writer.setnchannels(1)
+            writer.setsampwidth(2)
+            writer.setframerate(16000)
+            writer.writeframes(pcm.tobytes())
+        audio = read_audio(path)
+        self.assertEqual(audio.dtype, np.float32)
+        self.assertEqual(audio.shape[0], 2)
+        self.assertAlmostEqual(audio.shape[1] / 32000, 2.5, places=2)
+        self.assertTrue(np.array_equal(audio[0], audio[1]))
+        self.assertAlmostEqual(float(np.abs(audio).max()), 0.5, places=2)
+
+    def test_video_is_probed_and_read_at_24_fps(self):
+        path = self.root / "clip.mp4"
+        subprocess.run([shutil.which("ffmpeg"), "-v", "error", "-f", "lavfi", "-i", "testsrc=size=160x90:rate=30:duration=2.5",
+                        "-f", "lavfi", "-i", "sine=duration=2.5", "-shortest", "-pix_fmt", "yuv420p", str(path)], check=True)
+        info = probe_video(path)
+        self.assertEqual((info.width, info.height, info.has_audio), (160, 90, True))
+        self.assertAlmostEqual(info.seconds, 2.5, places=1)
+        frames = read_video(path, 64, 32, 22)
+        self.assertEqual((frames.dtype, frames.shape), (np.uint8, (22, 32, 64, 3)))
+        self.assertEqual(read_video(path, 64, 32, 999).shape[0], 60)
+        self.assertEqual(read_audio(path).shape[0], 2)
+
+    def test_cover_keeps_the_aspect_and_crops_the_center(self):
+        path = self.root / "wide.mp4"
+        # a 160x90 frame: left half red, right half blue; cropped to a square, the middle column stays split
+        subprocess.run([shutil.which("ffmpeg"), "-v", "error", "-f", "lavfi", "-i", "color=red:size=80x90:duration=1",
+                        "-f", "lavfi", "-i", "color=blue:size=80x90:duration=1", "-filter_complex", "hstack",
+                        "-pix_fmt", "yuv444p", str(path)], check=True)
+        frames = read_video(path, 64, 64, 1, cover=True)
+        self.assertEqual(frames.shape, (1, 64, 64, 3))
+        self.assertGreater(int(frames[0, 32, 4, 0]), 200)    # red on the left
+        self.assertGreater(int(frames[0, 32, 60, 2]), 200)   # blue on the right
+
+    def test_media_kind_tells_videos_from_sound_and_cover_art(self):
+        ffmpeg = shutil.which("ffmpeg")
+        video, song, wav = self.root / "clip.mp4", self.root / "song.mp3", self.root / "sound.wav"
+        subprocess.run([ffmpeg, "-v", "error", "-f", "lavfi", "-i", "testsrc=size=64x64:duration=1",
+                        "-pix_fmt", "yuv420p", str(video)], check=True)
+        # an MP3 with cover art carries a one-picture "(attached pic)" video stream
+        subprocess.run([ffmpeg, "-v", "error", "-f", "lavfi", "-i", "sine=duration=1", "-f", "lavfi",
+                        "-i", "color=red:size=64x64:duration=1", "-map", "0:a", "-map", "1:v", "-frames:v", "1",
+                        "-c:v", "mjpeg", "-disposition:v", "attached_pic", str(song)], check=True)
+        subprocess.run([ffmpeg, "-v", "error", "-f", "lavfi", "-i", "sine=duration=1", str(wav)], check=True)
+        self.assertEqual([media_kind(path) for path in (video, song, wav)], ["video", "audio", "audio"])
+        notes = self.root / "notes.txt"
+        notes.write_text("not media")
+        with self.assertRaisesRegex(H3Error, "no video or audio in notes.txt"):
+            media_kind(notes)
+
+    def test_phone_rotation_swaps_the_size(self):
+        from unittest import mock
+        report = ("  Duration: 00:00:04.20, start: 0.000000, bitrate: 1 kb/s\n"
+                  "  Stream #0:0[0x1](und): Video: h264 (High), yuv420p(tv), 1920x1080, 30 fps\n"
+                  "      Side data:\n        displaymatrix: rotation of -90.00 degrees\n")
+        result = subprocess.CompletedProcess([], 1, b"", report.encode())
+        with mock.patch("forge_h3.media.subprocess.run", return_value=result):
+            info = probe_video("phone.mov", ffmpeg=shutil.which("ffmpeg"))
+        self.assertEqual((info.width, info.height, info.has_audio), (1080, 1920, False))
+        self.assertAlmostEqual(info.seconds, 4.2)
+
+    def test_a_file_without_sound_is_a_clear_error(self):
+        path = self.root / "notes.txt"
+        path.write_text("not audio")
+        with self.assertRaisesRegex(H3Error, "notes.txt"):
+            read_audio(path)
 
 
 if __name__ == "__main__":

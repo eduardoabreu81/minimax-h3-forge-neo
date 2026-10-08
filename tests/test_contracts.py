@@ -261,8 +261,69 @@ class RequestTests(unittest.TestCase):
         with self.assertRaisesRegex(H3Error, "mode"):
             GenerationRequest(mode="r2v")
 
+    def test_reference_audio_needs_ref2va_and_at_most_three_clips(self):
+        self.assertEqual(GenerationRequest(mode="ref2va", reference_audios=3).reference_audios, 3)
+        with self.assertRaisesRegex(H3Error, "Reference audio needs a Ref2VA checkpoint"):
+            GenerationRequest(reference_audios=1)
+        with self.assertRaisesRegex(H3Error, "up to 3 reference audio"):
+            GenerationRequest(mode="ref2va", reference_audios=4)
+
+    def test_guide_frame_counts_from_either_end(self):
+        self.assertIsNone(GenerationRequest().guide_index)
+        self.assertEqual(GenerationRequest(frames=124, guide_frame=0).guide_index, 0)
+        self.assertEqual(GenerationRequest(frames=124, guide_frame=-1).guide_index, 123)
+        self.assertEqual(GenerationRequest(mode="ref2va", frames=124, guide_frame="-124").guide_index, 0)
+        for frame in (124, -125):
+            with self.assertRaisesRegex(H3Error, "outside the clip's 124 frames"):
+                GenerationRequest(frames=124, guide_frame=frame)
+        # Still image makes a 5-frame clip
+        with self.assertRaisesRegex(H3Error, "outside the clip's 5 frames"):
+            GenerationRequest(output="Still image", frames=124, guide_frame=5)
+        with self.assertRaisesRegex(H3Error, "Guide frame must be an integer"):
+            GenerationRequest(guide_frame=1.5)
+
+    def test_reference_videos_and_the_twelve_file_limit(self):
+        self.assertEqual(GenerationRequest(mode="ref2va", reference_videos=3).reference_videos, 3)
+        with self.assertRaisesRegex(H3Error, "Reference videos need a Ref2VA checkpoint"):
+            GenerationRequest(reference_videos=1)
+        with self.assertRaisesRegex(H3Error, "up to 3 reference videos"):
+            GenerationRequest(mode="ref2va", reference_videos=4)
+        GenerationRequest(mode="ref2va", references=6, reference_videos=3, reference_audios=3)
+        with self.assertRaisesRegex(H3Error, "up to 12 reference files in all; 13 were given"):
+            GenerationRequest(mode="ref2va", references=7, reference_videos=3, reference_audios=3)
+
 
 class ReferenceTests(unittest.TestCase):
+    def test_reference_video_canvas_follows_comfyui(self):
+        from forge_h3.references import adapt_canvas, grid_frames, video_canvas
+        self.assertEqual(adapt_canvas(1920, 1080), (1344, 768))   # 768 short edge, 768 x 1344 cap
+        self.assertEqual(adapt_canvas(1080, 1920), (768, 1344))
+        self.assertEqual(adapt_canvas(1000, 1000), (768, 768))
+        self.assertEqual(video_canvas(640, 360), (640, 352))      # smaller videos are not enlarged
+        self.assertEqual(video_canvas(3840, 2160), (1344, 768))
+        self.assertEqual([grid_frames(n) for n in (4, 5, 21, 22, 72, 362)], [0, 5, 5, 22, 56, 362])
+
+    def test_reference_audio_follows_minimax_limits(self):
+        from unittest import mock
+
+        import numpy as np
+
+        from forge_h3 import references
+        lengths = {"a.wav": 2.5, "b.wav": 3.0, "short.wav": 1.5, "long.wav": 16.0, "ten.wav": 10.0}
+        fake = lambda path, ffmpeg="": np.zeros((2, round(lengths[path] * 32000)), dtype=np.float32)  # noqa: E731
+        with mock.patch.object(references, "read_audio", side_effect=fake):
+            clips = references.collect_audios(["a.wav", None, "b.wav"])
+            self.assertEqual([c.shape for c in clips], [(2, 80000), (2, 96000)])  # empty slots are skipped
+            self.assertEqual(references.collect_audios([None, None, None]), [])
+            with self.assertRaisesRegex(H3Error, r"2 to 15 seconds; short.wav lasts 1.5"):
+                references.collect_audios(["short.wav"])
+            with self.assertRaisesRegex(H3Error, r"2 to 15 seconds; long.wav lasts 16.0"):
+                references.collect_audios(["long.wav"])
+            with self.assertRaisesRegex(H3Error, r"15 seconds in all; these last 20.0"):
+                references.collect_audios(["ten.wav", "ten.wav"])
+            with self.assertRaisesRegex(H3Error, "up to 3 reference audio clips; 4 were given"):
+                references.collect_audios(["a.wav"] * 4)
+
     def test_pictures_are_scaled_down_to_the_clip_area_never_up(self):
         from forge_h3.references import reference_size
         self.assertEqual(reference_size(1920, 1080, 640, 384), (672, 384))   # Full HD for a 640x384 clip

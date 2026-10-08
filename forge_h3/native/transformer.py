@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 
 from ..contracts import raise_pending_error
-from . import kernels, lora
+from . import fun_control, kernels, lora
 from .dit import (
     SEGMENT_TAG,
     DiTBlock,
@@ -179,10 +179,16 @@ class MiniMaxH3Model(nn.Module):
                    "layout": self._layout(text_len, shapes, generation.keyframes, generation.refs)}
         if generation.keyframes:
             payload["keyframes"] = generation.keyframes
-            payload["cond_video_latents"] = [kf["latent"] for kf in generation.keyframes]
+            payload["cond_video_latents"] = [kf["latent"] for kf in generation.keyframes if "latent" in kf]
+            payload["cond_audio_latents"] = [kf["audio_latent"] for kf in generation.keyframes if "audio_latent" in kf]
         if generation.refs:
             payload["refs"] = generation.refs
-            payload["cond_video_latents"] = payload.get("cond_video_latents", []) + [r["latent"] for r in generation.refs]
+            payload["cond_video_latents"] = (payload.get("cond_video_latents", [])
+                                             + [r["latent"] for r in generation.refs if "latent" in r])
+            payload["cond_audio_latents"] = (payload.get("cond_audio_latents", [])
+                                             + [r["audio_latent"] for r in generation.refs if r.get("audio_latent") is not None])
+        if generation.controls:
+            payload["controls"] = generation.controls
         tags = text_token_tags(text_len, generation.vision_spans)
         if tags is not None:
             payload["text_token_tags"] = tags
@@ -205,8 +211,10 @@ class MiniMaxH3Model(nn.Module):
         # references change
         _, _, latent_t, lat_h, lat_w = shapes.video
         signature = (text_len, latent_t, lat_h + lat_h % 2, lat_w + lat_w % 2, shapes.audio[-1])
-        key = (signature + tuple((kf["resolved_frame_index"], tuple(kf["latent"].shape)) for kf in keyframes)
-               + tuple((r["kind"], tuple(r["latent"].shape)) for r in refs))
+        key = (signature + tuple((kf["resolved_frame_index"], tuple(kf["latent"].shape) if "latent" in kf else (),
+                                  tuple(kf["audio_latent"].shape) if "audio_latent" in kf else ()) for kf in keyframes)
+               + tuple((r["kind"], tuple(r["latent"].shape) if "latent" in r else (), r.get("ref_audio_t", 0))
+                       for r in refs))
         if key not in self._layouts:
             if len(self._layouts) >= LAYOUT_CACHE_SIZE:
                 self._layouts.clear()
@@ -329,9 +337,15 @@ class MiniMaxH3Model(nn.Module):
         # rotation table computed once per forward, consumed by the kitchen split-half rope
         rope_freqs = rope_rotation_table(self.rope_freqs(layout.position_ids, device), dtype)
 
-        for i, block in enumerate(self.blocks):
-            transformer_options["block_index"] = i
-            h = block(h, t_emb, mod_segments, rope_freqs, transformer_options)
+        controls = [run for run in payload.get("controls", ()) if run.active(float(sigma_v))]
+        if controls:
+            # the Fun ControlNet streams run next to its blocks (native/fun_control.py)
+            h = fun_control.apply_controls(controls, self.blocks, h, t_emb, mod_segments, rope_freqs,
+                                           transformer_options, layout)
+        else:
+            for i, block in enumerate(self.blocks):
+                transformer_options["block_index"] = i
+                h = block(h, t_emb, mod_segments, rope_freqs, transformer_options)
 
         # target streams are single contiguous segments (audio then video, last two)
         va, vb, _ = next(s for s in layout.segments if s[2] == "video")

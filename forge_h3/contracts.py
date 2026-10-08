@@ -17,6 +17,19 @@ MAX_AUDIO_SHIFT = 100.0
 # FL2VA (text, first and last frame) and Ref2VA (reference pictures) checkpoints
 MODES = ("fl2va", "ref2va")
 MAX_REFERENCES = 9
+# Ref2VA reference audio (MiniMax-H3 README): up to 3 clips, each 2-15 seconds, 15 seconds in all
+MAX_REF_AUDIOS = 3
+MIN_REF_AUDIO_SECONDS = 2.0
+MAX_REF_AUDIO_SECONDS = 15.0
+# reference videos: up to 3, each 2-15 seconds, 15 seconds in all; at most 12 reference files of every kind together
+MAX_REF_VIDEOS = 3
+MIN_REF_VIDEO_SECONDS = 2.0
+MAX_REF_VIDEO_SECONDS = 15.0
+MAX_REF_FILES = 12
+# the MP4's sound: H3's own audio, or the original sound of a source the request already has; H3 always generates
+# new audio, which a guide or a reference video only steers
+GENERATED_SOUNDTRACK = "Generated"
+SOUNDTRACKS = (GENERATED_SOUNDTRACK, "Guide", "Control video", "Reference video 1")
 
 
 class H3Error(RuntimeError):
@@ -70,6 +83,12 @@ class GenerationRequest:
     audio_shift: float = AUDIO_SHIFT
     mode: str = "fl2va"
     references: int = 0
+    reference_audios: int = 0
+    reference_videos: int = 0
+    # a guide anchored at this pixel frame (negative counts from the end), None without one
+    guide_frame: int | None = None
+    # a Fun ControlNet with a control video and/or an inpainting mask (control.py)
+    control: bool = False
 
     def __post_init__(self):
         if self.output not in ("Video", "Still image"):
@@ -81,9 +100,22 @@ class GenerationRequest:
                           "checkpoint for those.")
         if self.mode == "fl2va" and self.references:
             raise H3Error("Reference pictures need a Ref2VA checkpoint.")
+        if self.mode == "fl2va" and self.reference_audios:
+            raise H3Error("Reference audio needs a Ref2VA checkpoint.")
+        if self.mode == "fl2va" and self.reference_videos:
+            raise H3Error("Reference videos need a Ref2VA checkpoint.")
         self.references = integer(self.references, "References")
         if not 0 <= self.references <= MAX_REFERENCES:
             raise H3Error(f"H3 Ref2VA takes up to {MAX_REFERENCES} reference pictures.")
+        self.reference_audios = integer(self.reference_audios, "Reference audios")
+        if not 0 <= self.reference_audios <= MAX_REF_AUDIOS:
+            raise H3Error(f"H3 Ref2VA takes up to {MAX_REF_AUDIOS} reference audio clips.")
+        self.reference_videos = integer(self.reference_videos, "Reference videos")
+        if not 0 <= self.reference_videos <= MAX_REF_VIDEOS:
+            raise H3Error(f"H3 Ref2VA takes up to {MAX_REF_VIDEOS} reference videos.")
+        files = self.references + self.reference_audios + self.reference_videos
+        if files > MAX_REF_FILES:
+            raise H3Error(f"H3 Ref2VA takes up to {MAX_REF_FILES} reference files in all; {files} were given.")
         if self.output == "Still image" and self.keyframes:
             raise H3Error("H3 Still image does not take a first or last frame yet. Choose Video, or turn off "
                           "ImageStitch Integrated.")
@@ -104,6 +136,18 @@ class GenerationRequest:
             self.frames = integer(self.frames, "Frames")
             if not MIN_FRAMES <= self.frames <= MAX_FRAMES or (self.frames - MIN_FRAMES) % FRAME_STEP:
                 raise H3Error("H3 Frames must follow 17n + 5, from 5 to 362 (for example 22 or 124).")
+        if self.guide_frame is not None:
+            self.guide_frame = integer(self.guide_frame, "Guide frame")
+            if not 0 <= self.guide_index < self.frames:
+                raise H3Error(f"H3 Guide frame {self.guide_frame} is outside the clip's {self.frames} frames "
+                              f"(0 to {self.frames - 1}, or -1 to -{self.frames} from the end).")
+
+    @property
+    def guide_index(self):
+        """The guide's pixel frame counted from the start (ComfyUI MiniMaxH3AddGuide resolved_frame_index)."""
+        if self.guide_frame is None:
+            return None
+        return self.guide_frame if self.guide_frame >= 0 else self.frames + self.guide_frame
 
     @property
     def keyframes(self):

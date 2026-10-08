@@ -104,6 +104,30 @@ class TextEngineTests(unittest.TestCase):
         (entries,) = self.engine.tokens("", images=[first])
         self.assertEqual(self.text(entries), "<Picture 1>: ")
 
+    def test_reference_audio_labels_follow_the_pictures(self):
+        picture = object()
+        (entries,) = self.engine.tokens("<Audio 1> sings", images=[picture], audios=2)
+        self.assertEqual(self.text(entries), "<Picture 1>: <Audio 1>: <Audio 2>: <Audio 1> sings")
+        # audio never enters the vision path: only the picture is a vision block
+        self.assertEqual(len([e for e, _ in entries if isinstance(e, dict)]), 1)
+        (entries,) = self.engine.tokens("rain", audios=1)
+        self.assertEqual(self.text(entries), "<Audio 1>: rain")
+
+    def test_reference_videos_come_in_two_frame_blocks_after_the_pictures(self):
+        import torch
+        picture = object()
+        frames = torch.rand(3, 32, 32, 3)  # 1.5 s sampled at 2 FPS
+        videos = [{"frames": frames, "timestamps": [0.0, 0.5, 1.0], "soundtrack": True},
+                  {"frames": frames[:2], "timestamps": [0.0, 0.5], "soundtrack": False}]
+        (entries,) = self.engine.tokens("go", images=[picture], audios=1, videos=videos)
+        self.assertEqual(self.text(entries), "<Picture 1>: <Audio 1>: <Video 1>: <0.2 seconds><1.0 seconds>"
+                                             "<Video 2>: <0.2 seconds><Audio 2>: go")
+        blocks = [e for e, _ in entries if isinstance(e, dict)]
+        self.assertEqual([b.get("minimax_video_block", False) for b in blocks], [False, True, True, True])
+        # an odd frame count repeats the last frame to fill the temporal patch of 2
+        self.assertTrue(torch.equal(blocks[2]["data"][1], frames[2]))
+        self.assertEqual([tuple(b["data"].shape) for b in blocks[1:]], [(2, 32, 32, 3)] * 3)
+
     def test_vision_spans_cover_the_flanking_tokens(self):
         self.assertEqual(self.module.vision_spans([(14, 6), (35, 6)]), [(13, 21), (34, 42)])
         self.assertEqual(self.module.vision_spans([(0, 4)]), [(0, 5)])

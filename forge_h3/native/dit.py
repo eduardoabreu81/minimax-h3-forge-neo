@@ -204,8 +204,9 @@ class FinalLayer(nn.Module):
             out = self.norm(x[a:b]) * (1.0 + _mod_row(scale, row, scale.dtype)) + _mod_row(shift, row, shift.dtype)
             return out.to(torch.float32)
 
-        # the loaded weight decides: a PDD LoRA bank stacks n heads in the rows of the output projection
-        n = self.video_out.weight.shape[0] // self.video_dim
+        # a PDD LoRA bank stacks n heads in the rows of the output projection: in the weight once Forge merged the
+        # LoRA into it, otherwise in the reshape of the patch it applies at every call
+        n = head_count(self.video_out, self.video_dim)
         if n == 1:
             return self.video_out(mod(video_seg)), self.audio_out(mod(audio_seg))
 
@@ -220,6 +221,30 @@ class FinalLayer(nn.Module):
         stop = max(stop, start + 1)
         return (_pdd_head(self.video_out, mod(video_seg), n, start, stop, shifts[0]),
                 _pdd_head(self.audio_out, mod(audio_seg), n, start, stop, shifts[1]))
+
+
+def bank_size(patches, out_dim):
+    """The heads a LoRA's reshape_weight gives an output projection of out_dim rows (a PDD head bank, Kijai's
+    ComfyUI conversion of alibaba-pai's Acc LoRAs); 1 without one. patches: Forge's (strength, adapter, ...) tuples."""
+    n = 1
+    for patch in patches:
+        weights = getattr(patch[1], "weights", None)
+        reshape = weights[5] if weights is not None and len(weights) > 5 else None
+        if reshape:
+            n = max(n, int(reshape[0]) // out_dim)
+    return n
+
+
+def head_count(layer, out_dim):
+    """The PDD heads of an output projection: from its weight when the LoRA is merged into it, otherwise from the
+    patches Forge merges at every call (Automatic (fp16 LoRA), or a low-VRAM load)."""
+    n = layer.weight.shape[0] // out_dim
+    for function in getattr(layer, "weight_function", None) or ():
+        if hasattr(function, "patch"):      # OnlineLoRAPatch
+            n = max(n, bank_size(function.patch, out_dim))
+        elif hasattr(function, "patches"):  # LowVramPatch
+            n = max(n, bank_size(function.patches.get(function.key, ()), out_dim))
+    return n
 
 
 def _pdd_head(head, h, n, start, stop, flow_shift):
