@@ -84,10 +84,11 @@ class Panel:
             # Ref2VA only: the H3 panel's own video and audio inputs, as ImageStitch Integrated takes pictures only
             with gr.Accordion("Reference video and audio", open=False, visible=False,
                               elem_id=f"{self.tab}_h3_reference_media") as self.reference_media:
-                gr.Markdown(f"Up to {MAX_REF_VIDEOS} videos and {MAX_REF_AUDIOS} audio clips, each 2 to 15 seconds, "
-                            "15 seconds in all per kind. Each kind is numbered in upload order: videos are `<Video 1>`, "
-                            "`<Video 2>`...; `<Audio j>` counts the kept video soundtracks first, then the clips. A "
-                            "video longer than the clip keeps its first part.")
+                gr.Markdown(f"Up to {MAX_REF_VIDEOS} videos and {MAX_REF_AUDIOS} audio clips, each at least 2 seconds, "
+                            "15 seconds in all per kind: longer videos are cut to their first seconds, sound included. "
+                            "Each kind is numbered in upload order: videos are `<Video 1>`, `<Video 2>`...; `<Audio j>` "
+                            "counts the kept video soundtracks first, then the clips. A video longer than the clip keeps "
+                            "its first part.")
                 self.ref_media = gr.File(file_count="multiple", file_types=["video", "audio"],
                                          label="Reference videos and audio clips", elem_id=f"{self.tab}_h3_ref_media")
                 self.keep_soundtrack = gr.Checkbox(value=True, label="Use each video's soundtrack",
