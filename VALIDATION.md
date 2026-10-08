@@ -1,12 +1,33 @@
-# Validation: 0.6.0
+# Validation: 0.7.0
 
-GPU sessions from 2026-10-03 to 2026-10-06 (America/Sao_Paulo), CPU tests on 2026-10-06. The published examples, with prompts and settings, are in the wiki's [Examples](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Examples) page; the full measurement tables are in [Performance and Memory](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Performance-and-Memory).
+GPU sessions from 2026-10-03 to 2026-10-08 (America/Sao_Paulo), CPU tests on 2026-10-06. The published examples, with prompts and settings, are in the wiki's [Examples](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Examples) page; the full measurement tables are in [Performance and Memory](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Performance-and-Memory).
 
 ## Environment
 
 One NVIDIA A40 (48 GB) with about 50 GB of system RAM (46.6 GiB container limit), RunPod, three Pods in two regions. Forge Neo `97b26fb` (`neo-2.29.2`), Python 3.13, Torch 2.13 cu130, comfy-kitchen 0.2.36 with its CUDA backend, PyTorch SDPA attention. Standard model set: Comfy-Org pruned INT8 ConvRot DiT, INT8 ConvRot text encoder, fp16 video VAE and fp32 audio VAE (revision `e5eb578`).
 
 Requests went through Forge's API (`/sdapi/v1/txt2img` and `img2img`), which runs the same processing as the Generate button. Times are wall time for the whole request, model loading included when the model was not loaded yet. RAM was sampled once per second.
+
+## 0.7.0: reference videos and sound, motion control, Acc LoRAs (2026-10-07 and 2026-10-08)
+
+CPU: 157 tests and Ruff pass. New: reference videos and audio clips (`references.py`: numbering, soundtracks, the 15-second budget, longer videos cut to their first seconds), the guide anchored at a frame, the Fun ControlNet-Union 2.0 with Forge's preprocessors, a second control and video inpainting (`control.py`, `native/fun_control.py`), the Soundtrack choice, the PDD head bank of the Acc 8-Step LoRAs in every LoRA mode (`tests/test_pdd.py`, checked against alibaba-pai's dt-weighted block blend), and the memory each H3 stage adds to Forge's estimate.
+
+**Environment (2026-10-08).** One A40 (48 GB), RunPod CA-MTL-1, Forge Neo `neo-2.29.2` with comfy-kitchen 0.2.37, `--use-ck-attention`. INT8 ConvRot DiTs and text encoder unless noted, 124 frames (5.17 s) at 1344×768 or 768×1344.
+
+| Test | Setup | Wall | Result |
+| --- | --- | ---: | --- |
+| Voice from a guide | FL2VA, a voice as the guide audio at frame 0, 20 steps | 526 s | lip sync on the guide voice |
+| Same, Acc LoRA | FL2VA Acc 8-Step merged, Euler 8 steps | 319 s | same quality, about 40% faster |
+| Same, Acc LoRA online | Automatic (fp16 LoRA) | 331 s | the same clip; `H3 PDD heads: 32` in the infotext |
+| Reference picture, Acc LoRA | Ref2VA Acc 8-Step + People LoRA, 1472×832 | 409 s | on a par with the turbo LoRA recipe (383 s) |
+| Canny control | FL2VA, 40 steps, Pexels walk as control | 1115 s | the ramp, handrail and step timing kept, new person and season |
+| Inpainting | FL2VA Acc 8 steps, a still mask on the right third | 416 s | that third redrawn, the rest unchanged, the source's sound kept |
+| Pose control + sheet | Ref2VA Acc, DWPose, one character sheet or three views | 513-519 s | head turns follow better than with one front picture |
+| Character Swap LoRA | Ref2VA + swap LoRA + Acc, the source as `<Video 1>` | 853-876 s | position and motion kept on 5 s shots; a hand on the rim is lost |
+| Motion-only reference | Ref2VA, no LoRA, 20 steps, the person in negative at 288×512 | 770-795 s | face and motion kept, in a studio and on a street with a moving camera |
+| 15 s swap | W4A8 + INT4, 362 frames, reference at 288×512 | 1869 s | runs; the swap does not hold for 15 s (the LoRA is made for 4-5 s) |
+
+**Memory.** Forge sizes each stage from the generated latent, as for an image model. H3 now reserves what it adds at each stage: the video VAE's working memory for control and guide clips and for reference pictures, the text encoder's activations for the vision tokens of reference pictures and videos (a 5 s 1080×1920 reference is about 12k tokens), and the reference latents in the DiT sequence during sampling. Before these, control clips, reference videos and a 15 s reference video at 768×1344 ran out of memory on the A40; with them, every run above completed.
 
 ## 0.6.0: reference pictures, 16 GB cards, ck attention (2026-10-05 and 2026-10-06)
 

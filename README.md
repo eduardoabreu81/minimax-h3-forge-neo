@@ -3,7 +3,7 @@
 <div align="center">
 
 [![Forge Neo](https://img.shields.io/badge/Forge-Neo-blue)](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)
-[![Version](https://img.shields.io/badge/Version-0.6.1-brightgreen)](https://github.com/eduardoabreu81/minimax-h3-forge-neo)
+[![Version](https://img.shields.io/badge/Version-0.7.0-brightgreen)](https://github.com/eduardoabreu81/minimax-h3-forge-neo)
 ![Status](https://img.shields.io/badge/Status-Work_in_progress-orange)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-green)](LICENSE)
 
@@ -11,7 +11,7 @@
 
 </div>
 
-Generate **videos with sound** with **[MiniMax H3](https://github.com/MiniMax-AI/MiniMax-H3)** inside Forge Neo, using the checkpoint, preset and Generate button you already know - describe the scene and its sounds, start from a picture, or give it pictures of the people and things to show, and get an MP4 with picture and audio made together.
+Generate **videos with sound** with **[MiniMax H3](https://github.com/MiniMax-AI/MiniMax-H3)** inside Forge Neo, using the checkpoint, preset and Generate button you already know - describe the scene and its sounds, start from a picture, give it pictures, videos and sounds of the people and things to show, or make it follow the motion of another video, and get an MP4 with picture and audio made together.
 
 <div align="center">
 
@@ -22,7 +22,7 @@ Generate **videos with sound** with **[MiniMax H3](https://github.com/MiniMax-AI
 </div>
 
 > [!Important]
-> **Work in progress.** Text-to-video with sound, first/last frame and reference pictures work. Tested on a 48 GB A40, a 24 GB RTX 4090 and a 16 GB RTX 2000 Ada with 32 GB of system RAM, using the [smaller files](#-installation). Cards under 16 GB have not been tested yet.
+> **Work in progress.** Text-to-video with sound, first/last frame, reference pictures, videos and sounds, and motion control with inpainting work. Tested on a 48 GB A40, a 24 GB RTX 4090 and a 16 GB RTX 2000 Ada with 32 GB of system RAM, using the [smaller files](#-installation). Cards under 16 GB have not been tested yet.
 >
 > This extension requires an up-to-date **Forge Neo** (the `neo` branch, revision `d70373e` of 3 October 2026 or later, with comfy-kitchen 0.2.37). On an older version it stays disabled and tells you so in the console - Forge Neo itself keeps working as usual.
 
@@ -41,6 +41,16 @@ Generate **videos with sound** with **[MiniMax H3](https://github.com/MiniMax-AI
 ---
 
 ## 🆕 What's New
+
+### v0.7.0 - Reference Videos and Sound, Motion Control
+
+- **Reference videos and sounds (Ref2VA)** - up to 3 videos and 3 audio clips next to the pictures: a dance to copy, a voice to speak with, a place to show; a video's own sound comes with it
+- **Guide** - anchor a video or a voice at any frame of the clip, for example a voice to speak with from the first frame, or the end of a previous clip to continue it
+- **Motion control (Fun ControlNet)** - follow the motion and shapes of any video through a pose, depth or edge map made by Forge's own preprocessors, or two of them together
+- **Video inpainting** - redraw only the part of a video under a mask and keep the rest
+- **Soundtrack** - keep the original sound of a guide, control or reference video in the result
+- **Acc 8-Step LoRAs** - alibaba-pai's acceleration LoRAs, 8 steps with the same look, about 40% faster, and they combine with other LoRAs
+- **Long reference videos** - videos longer than H3's 15 seconds are cut to their first seconds instead of refused
 
 ### v0.6.1 - Works with Today's Forge Neo
 
@@ -109,6 +119,13 @@ Made inside Forge Neo, with sound. The previews are silent - **click one to down
 | [![A golden retriever puppy chases soap bubbles in a backyard](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/rtx4090-puppy.gif)](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/rtx4090-puppy.mp4) | [![Two friends in Flamengo and Fluminense shirts laugh and clink beer glasses in a Rio bar](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/rtx4090-boteco.gif)](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/rtx4090-boteco.mp4) | [![A drone glides over a fishing village festival as fireworks burst over the sea](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/rtx4090-festival.gif)](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/rtx4090-festival.mp4) |
 | RTX 4090 (24 GB), smaller files | RTX 4090, 10 s, dialogue | RTX 4090, 960×544 |
 
+**New in 0.7.0** - swapping a character, following a video and redrawing part of it:
+
+| Character swap | Motion control (canny edges) | Inpainting |
+| :---: | :---: | :---: |
+| [![A dunk filmed from a drone, the player swapped for Hatsune Miku and for a new character](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/dunk-top-compare.gif)](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/dunk-top-nerd.mp4) | [![A woman walking down a ramp, redrawn in a red coat on an autumn evening](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/walk-canny-compare.gif)](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/walk-canny.mp4) | [![The right side of a street turned into cherry trees in bloom](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/walk-inpaint-compare.gif)](https://raw.githubusercontent.com/wiki/eduardoabreu81/minimax-h3-forge-neo/media/walk-inpaint.mp4) |
+| Swap LoRA, 8 steps | Same walk, new person and season | The rest of the video is kept |
+
 Every prompt, the exact settings and the generation times - plus more clips, FastH3 and a community checkpoint - are in the **[Examples](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Examples)** page of the wiki.
 
 ---
@@ -141,6 +158,22 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 - Pictures of any proportions, in the order the prompt numbers them (`<Picture 1>`, `<Picture 2>`...)
 - Prompts in MiniMax's [full-reference format](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Reference-Pictures#writing-the-prompt), with lines in any language
 
+### 🎞️ Reference Videos and Sound
+
+- Up to **3 videos** and **3 audio clips** next to the reference pictures, in the **Reference video and audio** part of the MiniMax H3 panel
+- A video brings its own sound, or not - your choice
+- Numbered in the prompt as `<Video 1>`, `<Audio 1>`...; a video longer than 15 seconds is cut to its first seconds
+- **Guide** - a video or a voice anchored at a frame of the clip, with any H3 checkpoint
+- **Soundtrack** - keep the original sound of a guide, control or reference video instead of new audio
+
+### 🎯 Motion Control and Inpainting
+
+- **Fun ControlNet** from alibaba-pai: the clip follows the motion and shapes of any video
+- Forge's own preprocessors make the map from your video - pose, depth, canny, HED, lines, scribble - and save it next to the result
+- A **second control** adds another map, for example pose with a little depth
+- **Inpainting** - a mask (a picture or a video, white = redraw) redraws only that part of a video
+- **Strength**, **Start** and **End** set how much and how long the video is followed
+
 ### 🎛️ Familiar Forge Controls
 
 - Runs inside txt2img and img2img - no separate tab, no extra program
@@ -153,6 +186,7 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 ### ⚡ Faster Generation
 
 - **Turbo LoRAs** - 8 steps instead of 20, about twice as fast
+- **Acc 8-Step LoRAs** by alibaba-pai - 8 steps with the look of 20, and they work together with other LoRAs
 - **FastH3** - a distilled 8-step checkpoint, no LoRA needed, with the sparse attention it was trained with
 - **Community turbo checkpoints** that already include the distillation
 - **Sparse Attention Integrated** - long clips up to a quarter faster, with the prompt and the soundtrack kept exact
@@ -198,6 +232,15 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 | H3 checkpoint | [minimax_h3_fl2va_pruned_w4a8_mixed](https://huggingface.co/Kijai/MiniMax-H3-experimental/blob/main/minimax_h3_fl2va_pruned_w4a8_mixed.safetensors) (Kijai) | 12.5 GB |
 | Text encoder | [qwen3vl_32b_minimax_h3_int4_convrot](https://huggingface.co/Merserk/MiniMax-H3-INT4-ConvRot/blob/main/qwen3vl_32b_minimax_h3_int4_convrot.safetensors) (Merserk) | 14.9 GB |
 
+**Optional files for the new features:**
+
+| Part | File | Folder |
+| :--- | :--- | :--- |
+| Ref2VA checkpoint (reference pictures, videos, sounds) | [minimax_h3_ref2va_pruned_int8_convrot](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/main/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors) | `models/Stable-diffusion` |
+| Fun ControlNet (motion control, inpainting) | [minimax_h3_fun_controlnet_union_2.0_pruned_int8_convrot](https://huggingface.co/Kijai/MiniMax-H3-experimental/blob/main/model_patches/minimax_h3_fun_controlnet_union_2.0_pruned_int8_convrot.safetensors) (Kijai) | `models/ControlNet` |
+| Acc 8-Step LoRA, FL2VA | [MiniMax-H3-FL2VA-Acc-8Step_pruned_comfy](https://huggingface.co/Kijai/MiniMax-H3-experimental/blob/main/loras/MiniMax-H3-FL2VA-Acc-8Step_pruned_comfy.safetensors) (Kijai) | `models/Lora` |
+| Acc 8-Step LoRA, Ref2VA | [MiniMax-H3-Ref2VA-Acc-8Step_pruned_comfy](https://huggingface.co/Kijai/MiniMax-H3-experimental/blob/main/loras/MiniMax-H3-Ref2VA-Acc-8Step_pruned_comfy.safetensors) (Kijai) | `models/Lora` |
+
 6. Make sure **FFmpeg** is installed (or set its path in **Settings** → **MiniMax H3**)
 7. Pick the **h3** UI preset, the checkpoint, and **all three** of the text encoder, the video VAE and the audio VAE under **VAE / Text Encoder**
 
@@ -216,6 +259,7 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 | **Regular** (the h3 preset) | Res Multistep | Simple | 20 | 1 | 12 |
 | **Turbo LoRA** at weight 1 | Res Multistep | Simple | 8, or 12 with speech | 1 | 6 |
 | **FastH3** checkpoint | Res Multistep | Simple | 8 | 1 | 10 |
+| **Acc 8-Step LoRA** at weight 1 | **Euler** | Simple | 8 | 1 | 12 |
 
 Start from the **h3** preset and change the steps and Shift by hand for a turbo LoRA or FastH3.
 
@@ -269,6 +313,11 @@ With the default range, a person or object turning on itself may "morph" instead
 - For first and last frame, use pictures with the same proportions as the video; the last frame is cropped to the video size
 - With a turbo LoRA on long clips, set **Diffusion in Low Bits** to **Automatic (fp16 LoRA)** to save system RAM; on shorter clips the default **Automatic** is slightly faster
 - For a sharp live preview, set **Live Preview Method** to **TAESD** in Forge's settings - the preview decoder downloads by itself
+- With **motion control**, describe the person and the place, not the moves - a detailed choreography in the prompt wins over the control video
+- With a **pose** control, a person turning sideways may lose a hidden arm or leg in the pose map; add a little **depth** as the second control
+- A **reference video** does not need to be large: at about 288×512 it still shows the motion, and the clip is faster and lighter on memory
+- To **swap a character**, the [Character Swap LoRA](https://huggingface.co/akatz-ai/MiniMax-H3-Character-Swap-LoRA) works best on 4-5 second shots; see [Character Swap](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Character-Swap) on the wiki
+- The **Acc 8-Step LoRAs** are made for the **Euler** sampler and 8 steps; use the FL2VA one with FL2VA checkpoints and the Ref2VA one with Ref2VA checkpoints
 - Restart Forge before changing the text encoder
 - Keep the same seed when comparing settings
 - Keep the MP4 and the JSON file saved next to it - it records the settings
@@ -289,7 +338,10 @@ With the default range, a person or object turning on itself may "morph" instead
 - **[unsloth](https://huggingface.co/unsloth/MiniMax-H3-GGUF)** - GGUF checkpoints
 - **[madebyollin](https://github.com/madebyollin/taehv)** - the taeh3 live preview decoder
 - **[lightx2v](https://github.com/ModelTC/Minimax-H3-Turbo)** - turbo LoRA settings
+- **[alibaba-pai](https://huggingface.co/alibaba-pai)** - the Fun ControlNet-Union and the Acc 8-Step LoRAs
+- **[akatz-ai](https://huggingface.co/akatz-ai/MiniMax-H3-Character-Swap-LoRA)** - the Character Swap LoRA
 - **[Krea 2](https://huggingface.co/Comfy-Org/Krea-2)** - the reference pictures in the examples were made with Krea 2 Turbo in Forge Neo
+- **Example sources** - walk and dunk videos from [Pexels](https://www.pexels.com); dance cover by [Innah Bee](https://www.youtube.com/shorts/KEh0kEMlVPc); Hatsune Miku © Crypton Future Media, INC. ([piapro.net](https://piapro.net)), used without commercial purpose
 
 ---
 
