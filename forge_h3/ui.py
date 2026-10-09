@@ -132,6 +132,8 @@ class Panel:
                                                    elem_id=f"{self.tab}_h3_control_start")
                     self.control_end = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, value=1.0, label="End",
                                                  elem_id=f"{self.tab}_h3_control_end")
+                # labels unique in the panel: Forge keeps ui-config.json values by tab and label, so a second
+                # "Preprocessor" would start with the first one's value instead of Off
                 with gr.Accordion("Second control", open=False, elem_id=f"{self.tab}_h3_control2"):
                     gr.Markdown("Another condition through the same Fun ControlNet, from the control video above unless "
                                 "you add one here, for example pose 0.7 with depth 0.3. The two add up: keep their "
@@ -139,14 +141,16 @@ class Panel:
                     self.control2_video = gr.Video(sources=["upload"], label="Control video (optional)",
                                                    elem_id=f"{self.tab}_h3_control2_video")
                     self.preprocessor2 = gr.Dropdown(choices=[CONTROL2_OFF] + list(PREPROCESSORS), value=CONTROL2_OFF,
-                                                     label="Preprocessor", elem_id=f"{self.tab}_h3_control2_preprocessor")
+                                                     label="Second preprocessor",
+                                                     elem_id=f"{self.tab}_h3_control2_preprocessor")
                     with gr.Row():
                         self.control2_strength = gr.Slider(minimum=0.0, maximum=2.0, step=0.05, value=0.3,
-                                                           label="Strength", elem_id=f"{self.tab}_h3_control2_strength")
-                        self.control2_start = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, value=0.0, label="Start",
-                                                        elem_id=f"{self.tab}_h3_control2_start")
-                        self.control2_end = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, value=1.0, label="End",
-                                                      elem_id=f"{self.tab}_h3_control2_end")
+                                                           label="Second strength",
+                                                           elem_id=f"{self.tab}_h3_control2_strength")
+                        self.control2_start = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, value=0.0,
+                                                        label="Second start", elem_id=f"{self.tab}_h3_control2_start")
+                        self.control2_end = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, value=1.0,
+                                                      label="Second end", elem_id=f"{self.tab}_h3_control2_end")
                 refresh.click(control_choices, outputs=[self.control_model], queue=False, show_progress=False)
             self.status = gr.Markdown("Select the H3 text encoder, video VAE and audio VAE in VAE / Text Encoder.")
             with gr.Accordion("Components", open=False):

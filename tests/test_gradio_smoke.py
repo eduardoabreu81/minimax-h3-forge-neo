@@ -49,6 +49,30 @@ class GradioSmoke(unittest.TestCase):
         self.assertEqual(len({id(fn.fn) for fn in demo.fns.values()
                               if getattr(fn.fn, "__name__", "") == "update"}), 2)
 
+    def test_panel_labels_are_unique_for_ui_config(self):
+        # Forge's ui_loadsave keys saved values by tab and label (accordions left out): two inputs with one label
+        # share a value, which once turned the second control on by itself
+        import gradio as gr
+
+        from forge_h3 import ui
+        ui.reset()
+        self.addCleanup(ui.reset)
+        for is_img2img in (False, True):
+            with gr.Blocks() as interface:
+                panel = ui.Panel(is_img2img)
+            labels = []
+
+            def walk(block):
+                if hasattr(block, "children"):
+                    for child in block.children:
+                        walk(child)
+                elif getattr(block, "label", None) is not None:
+                    labels.append(block.label)
+
+            walk(interface)
+            self.assertEqual(sorted({label for label in labels if labels.count(label) > 1}), [])
+            self.assertEqual(panel.preprocessor2.value, ui.CONTROL2_OFF)
+
     def test_real_blocks_build_and_model_switching(self):
         import gradio as gr
 

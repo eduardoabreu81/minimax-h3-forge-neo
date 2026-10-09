@@ -3,7 +3,7 @@
 <div align="center">
 
 [![Forge Neo](https://img.shields.io/badge/Forge-Neo-blue)](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)
-[![Version](https://img.shields.io/badge/Version-0.7.1-brightgreen)](https://github.com/eduardoabreu81/minimax-h3-forge-neo)
+[![Version](https://img.shields.io/badge/Version-0.7.2-brightgreen)](https://github.com/eduardoabreu81/minimax-h3-forge-neo)
 ![Status](https://img.shields.io/badge/Status-Work_in_progress-orange)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-green)](LICENSE)
 
@@ -41,6 +41,10 @@ Generate **videos with sound** with **[MiniMax H3](https://github.com/MiniMax-AI
 ---
 
 ## 🆕 What's New
+
+### v0.7.2 - Fix for the WebUI
+
+- **Fix** for 0.7.0 and 0.7.1 in the WebUI: every generation without a control video stopped with `The second H3 control uses the Fun ControlNet of the first` ([#2](https://github.com/eduardoabreu81/minimax-h3-forge-neo/issues/2)). The **Second control** fields now have names of their own (Second preprocessor, Second strength...), so they start switched off. Update the extension and restart Forge Neo.
 
 ### v0.7.1 - Faster Saving
 
