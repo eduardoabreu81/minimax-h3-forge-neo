@@ -1,12 +1,34 @@
-# Validation: 0.7.0
+# Validation: 0.7.1
 
-GPU sessions from 2026-10-03 to 2026-10-08 (America/Sao_Paulo), CPU tests on 2026-10-06. The published examples, with prompts and settings, are in the wiki's [Examples](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Examples) page; the full measurement tables are in [Performance and Memory](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Performance-and-Memory).
+GPU sessions from 2026-10-03 to 2026-10-09 (America/Sao_Paulo), CPU tests on 2026-10-06. The published examples, with prompts and settings, are in the wiki's [Examples](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Examples) page; the full measurement tables are in [Performance and Memory](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Performance-and-Memory).
 
 ## Environment
 
 One NVIDIA A40 (48 GB) with about 50 GB of system RAM (46.6 GiB container limit), RunPod, three Pods in two regions. Forge Neo `97b26fb` (`neo-2.29.2`), Python 3.13, Torch 2.13 cu130, comfy-kitchen 0.2.36 with its CUDA backend, PyTorch SDPA attention. Standard model set: Comfy-Org pruned INT8 ConvRot DiT, INT8 ConvRot text encoder, fp16 video VAE and fp32 audio VAE (revision `e5eb578`).
 
 Requests went through Forge's API (`/sdapi/v1/txt2img` and `img2img`), which runs the same processing as the Generate button. Times are wall time for the whole request, model loading included when the model was not loaded yet. RAM was sampled once per second.
+
+## 0.7.1: faster MP4 export (2026-10-09)
+
+CPU: 162 tests and Ruff pass. The frames now go to FFmpeg as raw RGB through its standard input instead of being written as PNG files first; new tests cover array input, colours after the encode, cancelling without leftovers, FFmpeg errors and bad frames.
+
+**Environment.** One A40 (48 GB), RunPod CA-MTL-1, Forge Neo `831d242`, INT8 ConvRot FL2VA DiT and text encoder, h3 preset (Res Multistep, Simple, CFG 1).
+
+Export alone, the 0.7.0 code and the new one on the same decoded frames and sound:
+
+| Clip | 0.7.0 (PNG files) | 0.7.1 (raw pipe) | MP4 |
+| --- | ---: | ---: | --- |
+| 124 frames, 1344×768 | 31.4 s | 4.7 s | identical bytes |
+| 362 frames, 576×1024 (15 s) | 55.3 s | 11.6 s | identical bytes |
+
+Whole generations on 0.7.1, after a small warm-up run that loads the models:
+
+| Clip | Setup | 0.7.1 | Earlier |
+| --- | --- | ---: | ---: |
+| Fisherman, 1152×768, 73 frames | 20 steps, Shift 12, seed 5 | 216.8 s | 257.1 s (wiki); 271.0 s on 0.7.0 on the same Pod, first run after a restart |
+| Bus stop, 576×1024, 362 frames | turbo LoRA, 8 steps, Shift 6 | 654.8 s | 840.8 s (wiki, another Pod, LoRA on the fly) |
+
+Sampling took the same time per step on both builds (70.7 s for the bus stop); the export accounts for about 44 s of the bus stop and about 13 s of the fisherman. The rest of the gap to the older figures comes from model loading and from different Pods and settings.
 
 ## 0.7.0: reference videos and sound, motion control, Acc LoRAs (2026-10-07 and 2026-10-08)
 

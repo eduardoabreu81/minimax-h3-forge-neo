@@ -3,7 +3,7 @@
 <div align="center">
 
 [![Forge Neo](https://img.shields.io/badge/Forge-Neo-blue)](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)
-[![Version](https://img.shields.io/badge/Version-0.7.0-brightgreen)](https://github.com/eduardoabreu81/minimax-h3-forge-neo)
+[![Version](https://img.shields.io/badge/Version-0.7.1-brightgreen)](https://github.com/eduardoabreu81/minimax-h3-forge-neo)
 ![Status](https://img.shields.io/badge/Status-Work_in_progress-orange)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-green)](LICENSE)
 
@@ -41,6 +41,10 @@ Generate **videos with sound** with **[MiniMax H3](https://github.com/MiniMax-AI
 ---
 
 ## 🆕 What's New
+
+### v0.7.1 - Faster Saving
+
+- **Clips are saved faster** - the finished video goes straight into the MP4 instead of being stored picture by picture first. On an A40 a 15-second clip is ready about 45 seconds sooner and a 5-second one about 25 seconds sooner; the longer and larger the clip, the bigger the gain. The video itself is exactly the same.
 
 ### v0.7.0 - Reference Videos and Sound, Motion Control
 
