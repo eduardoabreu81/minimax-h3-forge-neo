@@ -1,6 +1,6 @@
 # Installation and troubleshooting
 
-Version 0.3.0. MiniMax H3 runs on Forge Neo's own loader, samplers and memory management; the extension installs no Python packages. See the [README](../README.md) for the short version, [VALIDATION.md](../VALIDATION.md) for what was checked on a GPU and the [wiki](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki) for the detailed guides.
+Version 0.3.0. MiniMax H3 runs on Forge Neo's own loader, samplers and memory management; the extension installs no Python packages. See the [README](../README.md) for the short version, [Performance and Memory](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Performance-and-Memory) for the measured times and the [wiki](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki) for the detailed guides.
 
 ## Requirements
 

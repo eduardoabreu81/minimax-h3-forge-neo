@@ -1,7 +1,7 @@
 """The taeh3 live preview decoders (native/taeh3.py) on CPU.
 
 madebyollin's temporal decoder was also checked against taehv.py at 62f7591 with the published weights on real
-frames: identical output, every frame (see VALIDATION.md); these tests keep the layout and the chunk arithmetic.
+frames: identical output, every frame; these tests keep the layout and the chunk arithmetic.
 """
 
 import tempfile
