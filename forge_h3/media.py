@@ -1,4 +1,8 @@
-"""Atomic local exports using Forge's FFmpeg or imageio's bundled executable."""
+"""Atomic local exports using Forge's FFmpeg or imageio's bundled executable.
+
+Video frames go to FFmpeg as raw RGB through its standard input: writing them as PNG files first is slower than
+sampling a whole clip.
+"""
 
 import os
 import re
@@ -12,7 +16,7 @@ from pathlib import Path
 import numpy as np
 from PIL.PngImagePlugin import PngInfo
 
-from .contracts import FPS, SAMPLE_RATE, H3Error
+from .contracts import FPS, SAMPLE_RATE, GenerationCancelled, H3Error
 
 # front left/right plus the center (a mono file's only channel), renormalized so nothing clips
 MIX_TO_STEREO = "pan=stereo|FL<FL+FC|FR<FR+FC"
@@ -157,44 +161,75 @@ def _write_wave(audio, path, samples):
         writer.writeframes(pcm.tobytes())
 
 
-def export_video(frames, audio, output, *, ffmpeg="", infotext="", cancelled=lambda: False):
-    if not frames:
+def frame_array(frames) -> np.ndarray:
+    """[T, H, W, 3] uint8 from PIL images or such an array; H and W even, as yuv420p needs."""
+    if isinstance(frames, np.ndarray):
+        array = frames
+    else:
+        frames = list(frames)
+        if len({frame.size for frame in frames}) > 1:
+            raise H3Error("H3 frames must have equal, even dimensions.")
+        array = np.stack([np.asarray(frame.convert("RGB")) for frame in frames]) if frames else np.zeros((0, 2, 2, 3), np.uint8)
+    if array.ndim != 4 or array.shape[-1] != 3 or array.dtype != np.uint8:
+        raise H3Error("H3 frames must be RGB images.")
+    if not len(array):
         raise H3Error("The H3 backend returned no frames.")
+    if array.shape[1] % 2 or array.shape[2] % 2:
+        raise H3Error("H3 frames must have equal, even dimensions.")
+    return np.ascontiguousarray(array)
+
+
+def export_video(frames, audio, output, *, ffmpeg="", infotext="", cancelled=lambda: False):
+    """frames: [T, H, W, 3] uint8 or PIL images; audio: [channels, samples] at 32 kHz, cut or padded to the clip's
+    length, or None."""
+    array = frame_array(frames)
+    count, height, width = array.shape[:3]
     target = Path(output).resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     executable = find_ffmpeg(ffmpeg)
     with tempfile.TemporaryDirectory(prefix=".h3-export-", dir=target.parent) as scratch:
         scratch = Path(scratch)
-        size = frames[0].size
-        for index, frame in enumerate(frames):
-            if cancelled():
-                from .contracts import GenerationCancelled
-                raise GenerationCancelled("H3 export cancelled.")
-            if frame.size != size or size[0] % 2 or size[1] % 2:
-                raise H3Error("H3 frames must have equal, even dimensions.")
-            frame.convert("RGB").save(scratch / f"{index:06d}.png")
         encoded = scratch / "result.mp4"
-        command = [executable, "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-                   "-framerate", str(FPS), "-i", str(scratch / "%06d.png")]
+        command = [executable, "-hide_banner", "-loglevel", "error", "-y",
+                   "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{width}x{height}", "-framerate", str(FPS),
+                   "-i", "pipe:0"]
         if audio is not None:
-            _write_wave(audio, scratch / "audio.wav", round(len(frames) / FPS * SAMPLE_RATE))
+            _write_wave(audio, scratch / "audio.wav", round(count / FPS * SAMPLE_RATE))
             command += ["-i", str(scratch / "audio.wav"), "-map", "0:v:0", "-map", "1:a:0",
                         "-c:a", "aac", "-b:a", "192k"]
         else:
             command += ["-an"]
-        command += ["-frames:v", str(len(frames)), "-c:v", "libx264", "-crf", "18",
+        command += ["-frames:v", str(count), "-c:v", "libx264", "-crf", "18",
                     "-pix_fmt", "yuv420p", "-movflags", "+faststart",
                     "-metadata", "comment=" + infotext, str(encoded)]
+        errors = scratch / "ffmpeg.log"
         try:
-            result = subprocess.run(command, capture_output=True, text=True, timeout=600,
-                                    check=False,
-                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            with open(errors, "wb") as log:
+                process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=log,
+                                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                try:
+                    for frame in array:
+                        if cancelled():
+                            raise GenerationCancelled("H3 export cancelled.")
+                        process.stdin.write(frame.tobytes())
+                    process.stdin.close()
+                    process.wait(timeout=600)
+                except BaseException:
+                    process.kill()
+                    process.wait()
+                    try:
+                        process.stdin.close()
+                    except OSError:
+                        pass
+                    raise
+        except BrokenPipeError:
+            pass  # FFmpeg stopped reading: its own error is in the log
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise H3Error(f"H3 video export failed: {exc}") from exc
-        if result.returncode or not encoded.is_file():
-            raise H3Error("H3 video export failed: " + result.stderr[-2000:])
+        if process.returncode or not encoded.is_file():
+            message = errors.read_text(encoding="utf-8", errors="replace")[-2000:] if errors.is_file() else ""
+            raise H3Error("H3 video export failed: " + message)
         if cancelled():
-            from .contracts import GenerationCancelled
             raise GenerationCancelled("H3 export cancelled.")
         os.replace(encoded, target)
     return str(target)

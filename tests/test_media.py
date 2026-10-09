@@ -9,10 +9,11 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from forge_h3.contracts import H3Error
+from forge_h3.contracts import GenerationCancelled, H3Error
 from forge_h3.media import (
     export_still,
     export_video,
+    frame_array,
     media_kind,
     probe_video,
     read_audio,
@@ -67,11 +68,60 @@ class ExportTests(unittest.TestCase):
         self.assertFalse(target.exists())
         self.assertEqual(list(self.root.iterdir()), [])
 
+    def test_array_frames_survive_the_encode(self):
+        # flat colours that survive yuv420p, one per frame
+        values = np.linspace(20, 230, 9).astype(np.uint8)
+        frames = np.zeros((9, 64, 96, 3), np.uint8)
+        frames[..., 0] = values[:, None, None]
+        frames[..., 1] = 128
+        frames[..., 2] = 255 - values[:, None, None]
+        path = export_video(frames, self.audio, self.root / "array.mp4", infotext="Seed: 7")
+        self.assertEqual(list(self.root.iterdir()), [Path(path)])  # no scratch left behind
+        decoded = subprocess.check_output([shutil.which("ffmpeg"), "-v", "error", "-i", path,
+                                           "-f", "rawvideo", "-pix_fmt", "rgb24", "-"])
+        decoded = np.frombuffer(decoded, np.uint8).reshape(-1, 64, 96, 3)
+        self.assertEqual(decoded.shape, frames.shape)
+        self.assertLess(np.abs(decoded.astype(int) - frames.astype(int)).mean(), 3.0)
+        self.assertEqual(self.probe(path)["format"]["tags"]["comment"], "Seed: 7")
+
+    def test_cancelling_leaves_nothing_behind(self):
+        calls = []
+        target = self.root / "cancelled.mp4"
+        with self.assertRaises(GenerationCancelled):
+            export_video(self.frames, self.audio, target, cancelled=lambda: calls.append(1) or len(calls) > 3)
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_ffmpeg_error_is_reported(self):
+        # an encoder FFmpeg does not know: it fails before reading the frames
+        from unittest import mock
+        real = subprocess.Popen
+        with mock.patch("forge_h3.media.subprocess.Popen",
+                        lambda command, **kw: real([c if c != "libx264" else "no-such-encoder" for c in command], **kw)):
+            with self.assertRaisesRegex(H3Error, "export failed"):
+                export_video(self.frames, None, self.root / "broken.mp4")
+        self.assertEqual(list(self.root.iterdir()), [])
+
     def test_still_image_keeps_generation_metadata(self):
         path = export_still(self.frames[0], self.root / "still.png", "Seed: 123, H3 Frames: 5")
         with Image.open(path) as image:
             self.assertEqual(image.size, (64, 64))
             self.assertEqual(image.info["parameters"], "Seed: 123, H3 Frames: 5")
+
+
+class FrameTests(unittest.TestCase):
+    def test_pil_frames_become_an_array(self):
+        frames = [Image.new("RGBA", (6, 4), (10, 20, 30, 255))] * 2
+        array = frame_array(frames)
+        self.assertEqual((array.dtype, array.shape), (np.uint8, (2, 4, 6, 3)))
+        self.assertEqual(tuple(array[1, 0, 0]), (10, 20, 30))
+
+    def test_bad_frames(self):
+        bad = [np.zeros((2, 63, 96, 3), np.uint8), np.zeros((2, 64, 96, 3), np.float32),
+               np.zeros((0, 64, 96, 3), np.uint8), np.zeros((2, 64, 96), np.uint8), [],
+               [Image.new("RGB", (64, 64)), Image.new("RGB", (64, 32))]]
+        for frames in bad:
+            with self.assertRaises(H3Error):
+                frame_array(frames)
 
 
 @unittest.skipUnless(shutil.which("ffmpeg"), "FFmpeg required")

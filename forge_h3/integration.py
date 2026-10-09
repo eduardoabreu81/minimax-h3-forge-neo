@@ -507,13 +507,11 @@ def postprocess(p, processed):
 
 
 def _write_video(p, processed, request, generation):
-    import numpy as np
     import torch
     from modules import shared
-    from PIL import Image
 
-    pixels = generation.frames.clamp(0, 1).mul(255).round().to(torch.uint8)
-    frames = [Image.fromarray(np.moveaxis(frame.numpy(), 0, 2)) for frame in pixels]
+    # [T, H, W, 3] uint8, the form FFmpeg reads
+    frames = generation.frames.clamp(0, 1).mul(255).round().to(torch.uint8).permute(0, 2, 3, 1).contiguous().numpy()
     soundtrack = getattr(p, "h3_soundtrack", None)
     audio = (generation.waveform if soundtrack is None else soundtrack) if request.include_audio else None
     infotext = processed.infotexts[0] if processed.infotexts else processed.info
@@ -534,7 +532,7 @@ def _write_video(p, processed, request, generation):
             continue
         # what the preprocessor made of the video, to check it against the result
         suffix = "-control.mp4" if n == 0 else f"-control{n + 1}.mp4"
-        guide = export_video([Image.fromarray(frame) for frame in control.frames], None,
+        guide = export_video(control.frames, None,
                              Path(output).with_name(Path(output).stem + suffix),
                              ffmpeg=getattr(shared.opts, "h3_ffmpeg_path", ""), cancelled=lambda: shared.state.interrupted)
         processed.comments += f"H3 control video saved to {guide}\n"
