@@ -3,7 +3,7 @@
 <div align="center">
 
 [![Forge Neo](https://img.shields.io/badge/Forge-Neo-blue)](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)
-[![Version](https://img.shields.io/badge/Version-0.7.2-brightgreen)](https://github.com/eduardoabreu81/minimax-h3-forge-neo)
+[![Version](https://img.shields.io/badge/Version-0.7.3-brightgreen)](https://github.com/eduardoabreu81/minimax-h3-forge-neo)
 ![Status](https://img.shields.io/badge/Status-Work_in_progress-orange)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-green)](LICENSE)
 
@@ -41,6 +41,15 @@ Generate **videos with sound** with **[MiniMax H3](https://github.com/MiniMax-AI
 ---
 
 ## 🆕 What's New
+
+### v0.7.3 - GGUF Text Encoder, Upscale, Spectrum
+
+- **GGUF text encoder** - unsloth's `qwen3vl_32b_minimax_h3-Q2_K_M.gguf` (12.2 GB) works, from a first frame too (the vision part is inside the file): about half the size of the INT8 text encoder, with no visible loss in our tests
+- **Upscale the finished video** - a new **Upscale** section in the MiniMax H3 panel enlarges the video frame by frame with Forge's upscalers and saves it next to the original. ESRGAN takes a while (about 5 minutes for a 3-second clip on an A40); Lanczos is instant
+- **Spectrum Integrated works with H3** - Forge Neo's own option, at its default settings, made clips 21-25% faster with the same scene ([details](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Speed-Options#spectrum-integrated))
+- **Cleaner panel** - Hires. fix and the Refiner, which do nothing for H3 video, are hidden while an H3 checkpoint is selected
+- **A clear message instead of a black video** when a generation produces invalid values
+- **Fix** for Forge Neo's new *Show filenames without folder in the VAE / Text Encoder dropdown* setting: turned off, the H3 panel said the selected text encoder or VAEs were unavailable
 
 ### v0.7.2 - Fix for the WebUI
 
@@ -189,7 +198,8 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 - **Frames** takes the place of Batch Size and shows the length of the video
 - **Steps** stays the quality control, as with any model
 - The **h3** UI preset sets the sampler, schedule, steps, CFG and Shift
-- A small **MiniMax H3** panel holds the video options
+- A small **MiniMax H3** panel holds the video options, including an **Upscale** of the finished video with Forge's upscalers
+- Hires. fix and the Refiner, which do nothing for H3 video, are hidden while an H3 checkpoint is selected
 
 ### ⚡ Faster Generation
 
@@ -198,6 +208,7 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 - **FastH3** - a distilled 8-step checkpoint, no LoRA needed, with the sparse attention it was trained with
 - **Community turbo checkpoints** that already include the distillation
 - **Sparse Attention Integrated** - long clips up to a quarter faster, with the prompt and the soundtrack kept exact
+- **Spectrum Integrated** - Forge Neo's own option, 21-25% faster at its default settings
 - **Live preview** of the clip while it is generated, sharp with the **TAESD** method
 
 ### 🧠 Forge Memory Management
@@ -205,7 +216,7 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 - The model stays loaded between generations, like any Forge checkpoint
 - **24 GB cards** work with Forge's own offloading - 10-second clips on an RTX 4090 without Never OOM
 - **Never OOM Integrated** works with H3 - a 6-second clip in about 22 GB of VRAM
-- **Smaller formats** - W4A8 and INT4 files and GGUF checkpoints, for less RAM and disk
+- **Smaller formats** - W4A8 and INT4 files, GGUF checkpoints and a GGUF text encoder, for less RAM and disk
 - Switching from H3 to another model releases it first, so system RAM does not run out
 
 ### 🛡️ Safe by Design
@@ -239,6 +250,7 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 | :--- | :--- | :--- |
 | H3 checkpoint | [minimax_h3_fl2va_pruned_w4a8_mixed](https://huggingface.co/Kijai/MiniMax-H3-experimental/blob/main/minimax_h3_fl2va_pruned_w4a8_mixed.safetensors) (Kijai) | 12.5 GB |
 | Text encoder | [qwen3vl_32b_minimax_h3_int4_convrot](https://huggingface.co/Merserk/MiniMax-H3-INT4-ConvRot/blob/main/qwen3vl_32b_minimax_h3_int4_convrot.safetensors) (Merserk) | 14.9 GB |
+| Text encoder, even smaller | [qwen3vl_32b_minimax_h3-Q2_K_M.gguf](https://huggingface.co/unsloth/MiniMax-H3-GGUF/blob/main/qwen3vl_32b_minimax_h3-Q2_K_M.gguf) (unsloth) | 12.2 GB |
 
 **Optional files for the new features:**
 
@@ -289,6 +301,8 @@ More about both on the wiki: [16 GB Cards](https://github.com/eduardoabreu81/min
 | Turns, spins, flips, vehicles cornering | **0.50 - 1.00** | 256 | about 15% |
 
 With the default range, a person or object turning on itself may "morph" instead of rotating; starting at 0.50 keeps the motion of the regular result. With FastH3 the same switch turns on its own sparse attention.
+
+**Spectrum Integrated** - another 21-25%: turn it on and **keep its default settings**, with CFG 1 as the h3 preset sets. A bigger Cache Window skips more steps and changes the scene ([what it looks like](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Bloopers#spectrum-with-a-bigger-cache-window)).
 
 **Width and Height** must be multiples of 32. The model looks best at **768 on the short side** - 1152x768, 768x1152, 1024x576 or 576x1024. Use at least 544 with a turbo LoRA.
 

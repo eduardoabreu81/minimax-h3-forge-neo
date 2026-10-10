@@ -56,7 +56,7 @@ Links point to the Comfy-Org revision `e5eb578`. The text encoder includes the v
 | tsolful INT4BQ mixed DiT | Works, follows actions less precisely. |
 | Merserk INT4 DiT (also Civitai 2830162) | Loads, quality broken. |
 | GGUF DiTs, Q2_K to Q8_0 (tested: unsloth pruned Q4_K) | Work; slowest format. IQ types are refused. |
-| GGUF text encoders | Refused (Qwen3-VL's vision part is a separate file). |
+| [unsloth GGUF text encoder](https://huggingface.co/unsloth/MiniMax-H3-GGUF) (tested: `qwen3vl_32b_minimax_h3-Q2_K_M`) | Works, first frame included: the vision part is inside the file. llama.cpp GGUF text encoders, which keep it in a separate file, are refused. |
 
 Community files are recognized by their tensor layout, not by their name. A file called H3 on Civitai may still be another architecture or format; the extension says so when it cannot use a file.
 
