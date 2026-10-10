@@ -84,6 +84,32 @@ class ExportTests(unittest.TestCase):
         self.assertLess(np.abs(decoded.astype(int) - frames.astype(int)).mean(), 3.0)
         self.assertEqual(self.probe(path)["format"]["tags"]["comment"], "Seed: 7")
 
+    def test_transform_upscales_each_frame_on_its_way_to_ffmpeg(self):
+        frames = np.zeros((5, 32, 48, 3), np.uint8)
+        frames[..., 1] = 128
+        calls = []
+
+        def double(frame):
+            calls.append(frame.shape)
+            return frame.repeat(2, axis=0).repeat(2, axis=1)
+
+        path = export_video(frames, None, self.root / "larger.mp4", transform=double)
+        video = next(s for s in self.probe(path)["streams"] if s["codec_type"] == "video")
+        self.assertEqual((video["width"], video["height"], int(video["nb_frames"])), (96, 64, 5))
+        self.assertEqual(calls, [(32, 48, 3)] * 5)
+
+    def test_transform_that_changes_size_midway_is_refused(self):
+        frames = np.zeros((4, 32, 48, 3), np.uint8)
+        sizes = iter([2, 2, 3, 2])
+
+        def uneven(frame):
+            n = next(sizes)
+            return frame.repeat(n, axis=0).repeat(n, axis=1)
+
+        with self.assertRaisesRegex(H3Error, "equal, even"):
+            export_video(frames, None, self.root / "uneven.mp4", transform=uneven)
+        self.assertEqual(list(self.root.iterdir()), [])
+
     def test_cancelling_leaves_nothing_behind(self):
         calls = []
         target = self.root / "cancelled.mp4"

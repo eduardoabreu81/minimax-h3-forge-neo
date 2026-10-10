@@ -9,6 +9,7 @@ import uuid
 from pathlib import Path
 
 from . import keyframes, references
+from . import upscale as upscale_module
 from .contracts import (
     AUDIO_SHIFT,
     FPS,
@@ -79,11 +80,12 @@ def panel_media(values) -> dict:
     """The H3 panel's media inputs after Output, audio and Audio shift, as before_process takes them: the reference
     files (videos and audio clips together), the soundtrack checkbox, then the guide video, its soundtrack checkbox,
     the guide audio and the guide frame, then the Control: model, video, preprocessor, mask, source video, strength,
-    start and end, then the second control's video, preprocessor, strength, start and end, then the MP4's soundtrack.
+    start and end, then the second control's video, preprocessor, strength, start and end, then the MP4's soundtrack,
+    then the Upscaler and Upscale by of the finished video.
     An API call may send fewer; the rest keep their defaults."""
     (files, keep, guide_video, guide_soundtrack, guide_audio, guide_frame,
      control_model, control_video, preprocessor, mask, source, strength, start, end,
-     video2, preprocessor2, strength2, start2, end2, soundtrack) = (list(values) + [None] * 20)[:20]
+     video2, preprocessor2, strength2, start2, end2, soundtrack, upscaler, upscale_by) = (list(values) + [None] * 22)[:22]
     guide = None
     if guide_video or guide_audio:
         guide = {"video": guide_video, "audio": guide_audio, "frame": 0 if guide_frame is None else guide_frame,
@@ -101,7 +103,8 @@ def panel_media(values) -> dict:
     if isinstance(files, str):
         files = [files]
     return {"ref_media": list(files or ()), "keep_soundtrack": keep is not False, "guide": guide, "control": control,
-            "control2": control2, "soundtrack": soundtrack or GENERATED_SOUNDTRACK}
+            "control2": control2, "soundtrack": soundtrack or GENERATED_SOUNDTRACK,
+            "upscale": upscale_module.settings(upscaler, upscale_by)}
 
 
 def control_model_path(value):
@@ -212,13 +215,13 @@ def collect_control(settings, width, height, frames, ffmpeg=""):
 
 
 def before_process(p, output, include_audio, audio_shift=AUDIO_SHIFT, ref_audios=(), ref_videos=(), keep_soundtrack=True,
-                   guide=None, ref_media=(), control=None, control2=None, soundtrack=GENERATED_SOUNDTRACK):
+                   guide=None, ref_media=(), control=None, control2=None, soundtrack=GENERATED_SOUNDTRACK, upscale=None):
     """Before Forge loads the model: check the request and turn Frames into a single H3 generation."""
     p.h3_request = None
     set_pending_error(None)
     try:
         _before_process(p, output, include_audio, audio_shift, ref_audios, ref_videos, keep_soundtrack, guide, ref_media,
-                        control, control2, soundtrack)
+                        control, control2, soundtrack, upscale)
     except H3Error as error:
         set_pending_error(error)
         raise
@@ -242,9 +245,10 @@ def validate_img2img(p, mode="fl2va"):
 
 
 def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_videos=(), keep_soundtrack=True, guide=None,
-                    ref_media=(), control=None, control2=None, soundtrack=GENERATED_SOUNDTRACK):
+                    ref_media=(), control=None, control2=None, soundtrack=GENERATED_SOUNDTRACK, upscale=None):
     p.h3_controls = []
     p.h3_soundtrack = None
+    p.h3_upscale = None
     p.h3_last_frame = None
     p.h3_references = []
     p.h3_reference_audios = []
@@ -309,6 +313,9 @@ def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_vi
             print(f"[MiniMax H3] Soundtrack {soundtrack} is not used: the video is written without audio")
     if request.output == "Video":
         find_ffmpeg(ffmpeg)
+        if upscale:
+            upscale_module.find(upscale["upscaler"])
+            p.h3_upscale = upscale
     p.h3_soundtrack_choice = soundtrack if p.h3_soundtrack is not None else None
     p.h3_request = request
     p.h3_last_frame = last
@@ -388,6 +395,8 @@ def process(p):
                                       "H3 Audio": request.include_audio, "H3 Output": request.output})
     if request.audio_shift != AUDIO_SHIFT:
         p.extra_generation_params["H3 Audio shift"] = request.audio_shift
+    if getattr(p, "h3_upscale", None):
+        p.extra_generation_params.update({"H3 Upscaler": p.h3_upscale["upscaler"], "H3 Upscale by": p.h3_upscale["scale"]})
 
 
 def before_sampling(p, noise):
@@ -527,6 +536,16 @@ def _write_video(p, processed, request, generation):
     Path(output).with_suffix(".json").write_text(json.dumps(sidecar, indent=2), encoding="utf-8")
     processed.video_path = output
     processed.comments += f"H3 video saved to {output}\n"
+    chosen = getattr(p, "h3_upscale", None)
+    if chosen:
+        # the original stays; the upscaled copy is the result the UI shows
+        upscale_module.free_vram()
+        larger = export_video(frames, audio, Path(output).with_name(Path(output).stem + "-upscaled.mp4"),
+                              ffmpeg=getattr(shared.opts, "h3_ffmpeg_path", ""), infotext=infotext,
+                              cancelled=lambda: shared.state.interrupted,
+                              transform=upscale_module.frame_function(chosen))
+        processed.video_path = larger
+        processed.comments += f"H3 upscaled video saved to {larger}\n"
     for n, control in enumerate(getattr(p, "h3_controls", [])):
         if not control.preprocessor or control.frames is None:
             continue

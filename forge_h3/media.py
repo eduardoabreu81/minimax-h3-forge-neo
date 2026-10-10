@@ -179,11 +179,16 @@ def frame_array(frames) -> np.ndarray:
     return np.ascontiguousarray(array)
 
 
-def export_video(frames, audio, output, *, ffmpeg="", infotext="", cancelled=lambda: False):
+def export_video(frames, audio, output, *, ffmpeg="", infotext="", cancelled=lambda: False, transform=None):
     """frames: [T, H, W, 3] uint8 or PIL images; audio: [channels, samples] at 32 kHz, cut or padded to the clip's
-    length, or None."""
+    length, or None; transform: a function applied to each frame on its way to FFmpeg (an upscaler), which must give
+    every frame the same even size."""
     array = frame_array(frames)
-    count, height, width = array.shape[:3]
+    count = len(array)
+    first = np.ascontiguousarray(transform(array[0])) if transform else array[0]
+    height, width = first.shape[:2]
+    if first.shape[-1] != 3 or height % 2 or width % 2:
+        raise H3Error("H3 frames must have equal, even dimensions.")
     target = Path(output).resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     executable = find_ffmpeg(ffmpeg)
@@ -208,10 +213,14 @@ def export_video(frames, audio, output, *, ffmpeg="", infotext="", cancelled=lam
                 process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=log,
                                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 try:
-                    for frame in array:
+                    for n, frame in enumerate(array):
                         if cancelled():
                             raise GenerationCancelled("H3 export cancelled.")
-                        process.stdin.write(frame.tobytes())
+                        if transform and n:
+                            frame = np.ascontiguousarray(transform(frame))
+                            if frame.shape != first.shape:
+                                raise H3Error("H3 frames must have equal, even dimensions.")
+                        process.stdin.write((first if n == 0 else frame).tobytes())
                     process.stdin.close()
                     process.wait(timeout=600)
                 except BaseException:

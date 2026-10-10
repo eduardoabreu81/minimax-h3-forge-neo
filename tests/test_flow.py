@@ -460,7 +460,8 @@ class FlowTests(unittest.TestCase):
         self.assertEqual(media["guide"], {"video": None, "audio": "g.wav", "frame": -22, "soundtrack": False})
         # an API call with only Output, audio and Audio shift: no media, the soundtracks kept, no guide
         self.assertEqual(integration.panel_media([]), {"ref_media": [], "keep_soundtrack": True, "guide": None,
-                                                            "control": None, "control2": None, "soundtrack": "Generated"})
+                                                            "control": None, "control2": None, "soundtrack": "Generated",
+                                                            "upscale": None})
         # the second control is off until it has a preprocessor (Off counts as none); it takes the API defaults
         second = [None] * 14 + ["depth.mp4", "Off", 0.3, 0.0, 1.0]
         self.assertIsNone(integration.panel_media(second)["control2"])

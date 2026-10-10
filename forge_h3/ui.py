@@ -18,6 +18,9 @@ from .control import PREPROCESSORS
 from .integration import CONTROL2_OFF, checkpoint_info
 from .models import ROLE_LABELS, inspect_model
 from .ui_state import frame_view, preset_frame_view
+from .upscale import MAX_SCALE as MAX_UPSCALE
+from .upscale import OFF as UPSCALE_OFF
+from .upscale import upscaler_names
 
 COMPONENTS = {}
 NATIVE_CONTROLS = ("batch_size", "batch_count", "sampling", "scheduler", "cfg_scale")
@@ -152,6 +155,15 @@ class Panel:
                         self.control2_end = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, value=1.0,
                                                       label="Second end", elem_id=f"{self.tab}_h3_control2_end")
                 refresh.click(control_choices, outputs=[self.control_model], queue=False, show_progress=False)
+            # after the generation, frame by frame with Forge's upscalers; the original video is kept
+            with gr.Accordion("Upscale", open=False, elem_id=f"{self.tab}_h3_upscale"):
+                gr.Markdown("Upscales the finished video frame by frame and saves it next to the original, with "
+                            "`-upscaled` in its name. Not used for Still image.")
+                with gr.Row():
+                    self.upscaler = gr.Dropdown(choices=upscaler_names(), value=UPSCALE_OFF, label="Upscaler",
+                                                elem_id=f"{self.tab}_h3_upscaler")
+                    self.upscale_by = gr.Slider(minimum=1.0, maximum=MAX_UPSCALE, step=0.05, value=2.0,
+                                                label="Upscale by", elem_id=f"{self.tab}_h3_upscale_by")
             self.status = gr.Markdown("Select the H3 text encoder, video VAE and audio VAE in VAE / Text Encoder.")
             with gr.Accordion("Components", open=False):
                 self.summary = gr.Markdown("")
@@ -166,7 +178,7 @@ class Panel:
                 self.guide_soundtrack, self.guide_audio, self.guide_frame, self.control_model, self.control_video,
                 self.preprocessor, self.control_mask, self.control_source, self.control_strength, self.control_start,
                 self.control_end, self.control2_video, self.preprocessor2, self.control2_strength, self.control2_start,
-                self.control2_end, self.soundtrack]
+                self.control2_end, self.soundtrack, self.upscaler, self.upscale_by]
 
     @property
     def needed(self):
