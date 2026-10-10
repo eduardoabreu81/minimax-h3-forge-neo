@@ -45,7 +45,7 @@ Generate **videos with sound** with **[MiniMax H3](https://github.com/MiniMax-AI
 ### v0.7.3 - GGUF Text Encoder, Upscale, Spectrum
 
 - **GGUF text encoder** - unsloth's `qwen3vl_32b_minimax_h3-Q2_K_M.gguf` (12.2 GB) works, from a first frame too (the vision part is inside the file): about half the size of the INT8 text encoder, with no visible loss in our tests
-- **Upscale the finished video** - a new **Upscale** section in the MiniMax H3 panel enlarges the video frame by frame with Forge's upscalers and saves it next to the original. ESRGAN takes a while (about 5 minutes for a 3-second clip on an A40); Lanczos is instant
+- **Upscale the finished video** - a new **Upscale** section in the MiniMax H3 panel enlarges the video frame by frame with Forge's upscalers and saves it next to the original. For detail use **4x-UltraSharp** (in `models/ESRGAN`), for a clean instant enlargement **Lanczos**; Forge's built-in ESRGAN draws a grid texture ([comparison](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Settings-and-Controls#choosing-an-upscaler))
 - **Spectrum Integrated works with H3** - Forge Neo's own option, at its default settings, made clips 21-25% faster with the same scene ([details](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Speed-Options#spectrum-integrated))
 - **Cleaner panel** - Hires. fix and the Refiner, which do nothing for H3 video, are hidden while an H3 checkpoint is selected
 - **A clear message instead of a black video** when a generation produces invalid values
