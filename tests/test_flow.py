@@ -454,6 +454,19 @@ class FlowTests(unittest.TestCase):
         with self.assertRaisesRegex(H3Error, "Reference videos need a Ref2VA checkpoint"):
             integration.before_process(Txt2Img(), "Video", True, 3.0, (), ("a.mp4",))
 
+    def test_nan_after_sampling_or_decoding_is_reported_instead_of_a_black_video(self):
+        self.run_until_sampling(Txt2Img())
+        shapes = self.engine.generation.shapes
+        latent = torch.zeros(1, 1, 1, math.prod(shapes.video[1:]) + math.prod(shapes.audio[1:]))
+        latent[..., 3] = float("nan")
+        with self.assertRaisesRegex(H3Error, "sampling produced NaN"):
+            self.engine.decode_first_stage(latent)
+        broken = types.SimpleNamespace(decode=lambda z: torch.full((1, 3, 2, 4, 4), float("inf"), dtype=z.dtype))
+        self.engine.forge_objects.vae = types.SimpleNamespace(patcher=None, device="cpu", vae_dtype=torch.float16,
+                                                              first_stage_model=broken)
+        with self.assertRaisesRegex(H3Error, "video VAE produced NaN.*--fp32-vae"):
+            self.engine.decode_first_stage(torch.zeros_like(latent))
+
     def test_panel_media_maps_the_inputs_and_fills_api_gaps(self):
         media = integration.panel_media([["a.wav", "v.mp4"], False, None, False, "g.wav", -22])
         self.assertEqual((media["ref_media"], media["keep_soundtrack"]), (["a.wav", "v.mp4"], False))

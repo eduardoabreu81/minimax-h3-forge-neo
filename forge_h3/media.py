@@ -149,7 +149,7 @@ def _write_wave(audio, path, samples):
     if audio.ndim != 2 or audio.shape[0] not in (1, 2) or not audio.shape[1]:
         raise H3Error("H3 audio must have shape [channels, samples] with one or two channels.")
     if not np.isfinite(audio).all():
-        raise H3Error("H3 audio must contain finite samples.")
+        raise H3Error("H3 audio has NaN or Inf samples. Turn off Include generated audio to keep the video.")
     aligned = np.zeros((audio.shape[0], samples), dtype=np.float32)
     count = min(samples, audio.shape[1])
     aligned[:, :count] = audio[:, :count]

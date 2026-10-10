@@ -32,6 +32,11 @@ def encode_memory(shape, dtype) -> int:
     return 6000 * shape[-2] * shape[-1] * memory_management.dtype_size(dtype)
 
 
+def finite(tensor: torch.Tensor) -> bool:
+    """No NaN or Inf: max and min carry them through, without a mask the size of the video (one sync per call)."""
+    return bool(torch.isfinite(tensor.amax()) and torch.isfinite(tensor.amin()))
+
+
 def _video_vae_dtype() -> torch.dtype:
     # ComfyUI runs the H3 video VAE in fp16 or fp32 only
     if args.fp32_vae:
@@ -313,6 +318,9 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         generation = self.generation
         if generation is None or x.shape[-1] != math.prod(generation.shapes.video[1:]) + math.prod(generation.shapes.audio[1:]):
             raise RuntimeError("[MiniMax H3] the latent does not belong to the current H3 generation")
+        if not finite(x[:1]):
+            raise H3Error("H3 sampling produced NaN or Inf values: the video would come out black or as noise. Try "
+                          "another sampler, scheduler or attention option.")
         video, audio = generation.shapes.unpack(x[:1].float())
         # the sampler carries the audio scaled onto the video schedule (ComfyUI MiniMaxH3.process_latent_out)
         audio = audio / generation.audio_scale
@@ -320,6 +328,9 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         video_vae = self.forge_objects.vae
         memory_management.load_model_gpu(video_vae.patcher)
         pixels = video_vae.first_stage_model.decode(video.to(video_vae.device, video_vae.vae_dtype))  # [1, 3, T, H, W] in [0, 1]
+        if not finite(pixels):
+            advice = " Start Forge Neo with --fp32-vae." if video_vae.vae_dtype != torch.float32 else ""
+            raise H3Error(f"The H3 video VAE produced NaN or Inf values: the video would come out black.{advice}")
         generation.frames = pixels[0].float().cpu().movedim(1, 0)
 
         memory_management.load_model_gpu(self.audio_vae.patcher)

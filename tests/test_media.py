@@ -63,7 +63,7 @@ class ExportTests(unittest.TestCase):
 
     def test_bad_audio_leaves_no_partial_final_file(self):
         target = self.root / "bad.mp4"
-        with self.assertRaisesRegex(H3Error, "finite"):
+        with self.assertRaisesRegex(H3Error, "NaN or Inf"):
             export_video(self.frames, np.full((2, 300), np.nan), target)
         self.assertFalse(target.exists())
         self.assertEqual(list(self.root.iterdir()), [])
