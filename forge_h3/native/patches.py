@@ -17,7 +17,7 @@ from backend.state_dict import load_state_dict
 from huggingface_guess import detection, model_list
 from transformers.modeling_utils import no_init_weights
 
-from . import filebacked, model, release, taeh3, vae
+from . import filebacked, gguf_vision, model, release, taeh3, vae
 from .engine import MiniMaxH3Engine
 from .islands import fp32_islands, restore_fp32
 from .text_encoder import Qwen3VL32B
@@ -28,8 +28,8 @@ logger = logging.getLogger("forge_h3")
 TE_KEYS = ("visual.deepstack_merger_list.0.norm.weight", "model.layers.49.self_attn.q_proj.weight")
 TE_PREFIX = "qwen3vl_32b.transformer."
 
-MISSING_TE = ("MiniMax H3 needs its Qwen3-VL 32B text encoder: select qwen3vl_32b_minimax_h3_*.safetensors "
-              "under VAE / Text Encoder")
+MISSING_TE = ("MiniMax H3 needs its Qwen3-VL 32B text encoder: select a qwen3vl_32b_minimax_h3 file under VAE / Text "
+              "Encoder")
 
 _applied = False
 _sampling_h3 = False
@@ -150,9 +150,16 @@ def _hook_components() -> None:
         if cls_name == "Qwen3VLModel":
             if not isinstance(state_dict, dict) or len(state_dict) <= 16:
                 raise ValueError(MISSING_TE)
+            gguf = gguf_vision.is_gguf(state_dict)
+            if gguf:
+                from backend.loader_gguf import dequantize
+
+                gguf_vision.plain_vision(state_dict, dequantize)
             storages = filebacked.file_storages(state_dict)
             with _swapped(llama, "Qwen3VL", Qwen3VL32B):
                 text_encoder = original(guess, component_name, lib_name, cls_name, repo_path, state_dict)
+            if gguf:
+                gguf_vision.cast_to_input(text_encoder.visual)
             _file_backed("text encoder", text_encoder, storages)
             return text_encoder
 

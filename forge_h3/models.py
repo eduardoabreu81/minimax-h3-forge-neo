@@ -226,10 +226,9 @@ def _gguf_quantization(path, header, role):
     if unsupported:
         raise H3Error(f"{path.name} uses GGUF types Forge Neo cannot dequantize ({', '.join(unsupported)}). "
                       "Use a Q2_K to Q8_0 build.")
-    if role != "dit":
-        # llama.cpp keeps Qwen3-VL's vision tower in a separate mmproj file, which first and last frame need
-        raise H3Error(f"{path.name}: GGUF is supported for the H3 diffusion model only. Select a safetensors "
-                      f"{ROLE_LABELS[role]}.")
+    if role not in ("dit", "text_encoder"):
+        raise H3Error(f"{path.name}: GGUF is supported for the H3 diffusion model and text encoder only. Select a "
+                      f"safetensors {ROLE_LABELS[role]}.")
     counts = {}
     for k, v in header.items():
         if k != "__metadata__" and v["dtype"] not in GGUF_PLAIN:
@@ -247,7 +246,9 @@ def inspect_model(path):
     role = _role(keys)
     if role is None:
         if suffix == ".gguf" and any(k.startswith("blk.") for k in keys):
-            raise H3Error(f"{path.name}: GGUF text encoders are not supported yet. Select a safetensors H3 text "
+            # llama.cpp keeps Qwen3-VL's vision tower in a separate mmproj file; unsloth's H3 file carries it inside
+            raise H3Error(f"{path.name}: llama.cpp GGUF text encoders keep the vision part in a separate file, which "
+                          "H3 cannot load. Select unsloth's qwen3vl_32b_minimax_h3 GGUF or a safetensors H3 text "
                           "encoder, such as qwen3vl_32b_minimax_h3_int8_convrot.")
         return None
     metadata = json.dumps(header.get("__metadata__", {})).lower()

@@ -154,7 +154,7 @@ class QuantizationLabelTests(unittest.TestCase):
         self.assertEqual(inspect_model(mixed).quantization, "int4 + int8")
 
 
-GGML = {"F32": 0, "F16": 1, "Q8_0": 8, "Q4_K": 12, "IQ1_S": 19, "BF16": 30}
+GGML = {"F32": 0, "F16": 1, "Q8_0": 8, "Q2_K": 10, "Q4_K": 12, "Q5_K": 13, "IQ1_S": 19, "BF16": 30}
 
 
 def gguf_string(text):
@@ -179,6 +179,15 @@ GGUF_DIT = dict(DIT, **{"blocks.0.attn.qkv_proj.weight": ("Q4_K", [21504, 5376])
                         "blocks.0.mlp.fc1.weight": ("Q4_K", [28672, 5376]),
                         "blocks.0.norm1.weight": ("BF16", [5376]),
                         "video_patch_proj.weight": ("F32", [5376, 96])})
+
+
+# unsloth's qwen3vl_32b_minimax_h3-Q2_K_M.gguf in miniature: Hugging Face names, the vision tower inside, no metadata
+GGUF_TE = {"model.embed_tokens.weight": ("BF16", [151936, 5120]),
+           "model.layers.49.self_attn.q_proj.weight": ("Q2_K", [8192, 5120]),
+           "model.layers.49.mlp.gate_proj.weight": ("Q2_K", [25600, 5120]),
+           "model.layers.49.mlp.down_proj.weight": ("Q5_K", [5120, 25600]),
+           "visual.deepstack_merger_list.0.norm.weight": ("BF16", [4608]),
+           "visual.patch_embed.proj.weight": ("BF16", [3456, 2, 16, 16])}
 
 
 class GGUFTests(unittest.TestCase):
@@ -206,11 +215,26 @@ class GGUFTests(unittest.TestCase):
         with self.assertRaisesRegex(H3Error, "IQ1_S"):
             inspect_model(path)
 
-    def test_gguf_text_encoder_is_refused_with_a_clear_message(self):
+    def test_llama_cpp_text_encoder_is_refused_with_a_clear_message(self):
         path = gguf_checkpoint(self.root / "qwen.gguf", {"blk.0.attn_q.weight": ("Q4_K", [5120, 5120]),
                                                          "token_embd.weight": ("Q8_0", [151936, 5120])})
-        with self.assertRaisesRegex(H3Error, "GGUF text encoders are not supported"):
+        with self.assertRaisesRegex(H3Error, "separate file.*unsloth"):
             inspect_model(path)
+
+    def test_unsloth_text_encoder_is_recognized(self):
+        item = inspect_model(gguf_checkpoint(self.root / "qwen3vl_32b_minimax_h3-Q2_K_M.gguf", GGUF_TE))
+        self.assertEqual((item.role, item.quantization), ("text_encoder", "gguf Q2_K"))
+
+    def test_all_gguf_set_resolves(self):
+        dit = gguf_checkpoint(self.root / "model.gguf", GGUF_DIT)
+        te = gguf_checkpoint(self.root / "te.gguf", GGUF_TE)
+        paths = [te] + [checkpoint(self.root / f"{n}.safetensors", t) for n, t in (("v", VIDEO_VAE), ("a", AUDIO_VAE))]
+        components = resolve_components(dit, paths)
+        self.assertEqual((components.dit.quantization, components.text_encoder.quantization), ("gguf Q4_K", "gguf Q2_K"))
+
+    def test_gguf_vae_is_refused(self):
+        with self.assertRaisesRegex(H3Error, "diffusion model and text encoder only"):
+            inspect_model(gguf_checkpoint(self.root / "vae.gguf", VIDEO_VAE))
 
     def test_gguf_header_is_bounded_and_checked(self):
         path = self.root / "bad.gguf"

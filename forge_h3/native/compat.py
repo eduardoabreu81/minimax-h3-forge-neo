@@ -13,6 +13,7 @@ REQUIRED = {
     "backend.quant_ops": ("ck", "QUANT_ALGOS"),
     "backend.state_dict": ("load_state_dict",),
     "backend.loader": ("load_huggingface_component", "replace_state_dict", "possible_models"),
+    "backend.loader_gguf": ("dequantize",),
     "backend.nn.krea": ("SingleStreamDiT",),
     "backend.nn.llm.llama": ("Qwen3VL", "Qwen3VL_4BConfig", "Llama2_", "attention_function"),
     "backend.nn.llm.qwen35": ("QWEN3VL_VISION", "Qwen3VLVisionModel"),
