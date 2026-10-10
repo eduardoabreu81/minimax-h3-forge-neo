@@ -48,7 +48,9 @@ def module_paths(values):
     from modules_forge import main_entry
     result = []
     for value in values or []:
-        path = main_entry.module_list.get(value, value)
+        # Forge Neo keys its list by file name; with "Show filenames without folder" off the dropdown sends the path
+        # under models/VAE or models/text_encoder, which Forge itself reduces to the file name (modules_change)
+        path = main_entry.module_list.get(value) or main_entry.module_list.get(Path(value).name, value)
         if not Path(path).is_file():
             raise H3Error(f"Selected H3 component is unavailable: {Path(value).name}. Refresh the model list.")
         result.append(str(Path(path).resolve()))
