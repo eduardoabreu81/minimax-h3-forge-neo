@@ -122,6 +122,11 @@ class GradioSmoke(unittest.TestCase):
                                 pass
                             ui.capture(hires)
                             ui.capture(gr.Checkbox(value=True, visible=False, elem_id="txt2img_hr-checkbox"))
+                            # the Refiner, as Forge Neo's processing script names it
+                            with gr.Accordion("Refiner", elem_id="txt2img_enable") as refiner:
+                                pass
+                            ui.capture(refiner)
+                            ui.capture(gr.Checkbox(value=False, visible=False, elem_id="txt2img_enable-checkbox"))
                         ui.Panel(tab == "img2img")
                     self.assertEqual(ui.bind_all(), [])
                 self.assertTrue(all(p.bound for p in ui.PANELS))
@@ -154,7 +159,8 @@ class GradioSmoke(unittest.TestCase):
                 self.assertNotIn("interactive", leave_wan[14])
                 # Hires. fix is hidden and turned off with H3, shown again after
                 self.assertEqual((enter[15]["visible"], enter[16]["value"]), (False, False))
-                self.assertTrue(leave[15]["visible"])
+                self.assertEqual((enter[17]["visible"], enter[18]["value"]), (False, False))
+                self.assertTrue(leave[15]["visible"] and leave[17]["visible"])
                 self.assertNotIn("value", leave[16])
                 ui.reset()
 

@@ -24,9 +24,10 @@ from .upscale import upscaler_names
 
 COMPONENTS = {}
 NATIVE_CONTROLS = ("batch_size", "batch_count", "sampling", "scheduler", "cfg_scale")
-# Forge's InputAccordions that do nothing for H3 video (Hires. fix; the Refiner when Settings shows it): hidden and
-# turned off while an H3 checkpoint is selected, shown again after
-HIDDEN_ACCORDIONS = ("hr", "refiner_enable")
+# Forge's InputAccordions that do nothing for H3 video, by elem_id after the tab: Hires. fix, and the Refiner when
+# Settings shows it (Forge Neo's processing script names it just "enable"); hidden and turned off while an H3
+# checkpoint is selected, shown again after
+HIDDEN_ACCORDIONS = ("hr", "enable")
 PANELS = []
 logger = logging.getLogger("forge_h3")
 
