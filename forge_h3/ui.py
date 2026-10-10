@@ -24,6 +24,9 @@ from .upscale import upscaler_names
 
 COMPONENTS = {}
 NATIVE_CONTROLS = ("batch_size", "batch_count", "sampling", "scheduler", "cfg_scale")
+# Forge's InputAccordions that do nothing for H3 video (Hires. fix; the Refiner when Settings shows it): hidden and
+# turned off while an H3 checkpoint is selected, shown again after
+HIDDEN_ACCORDIONS = ("hr", "refiner_enable")
 PANELS = []
 logger = logging.getLogger("forge_h3")
 
@@ -205,9 +208,12 @@ class Panel:
         defaults = [{key: getattr(c, key) for key in ("minimum", "maximum", "step", "label", "visible", "choices", "interactive")
                      if hasattr(c, key)} for c in native]
         preset_input = [preset] if preset is not None else []
+        hidden = [(COMPONENTS[key], COMPONENTS[f"{key}-checkbox"]) for key in (f"{self.tab}_{name}" for name in HIDDEN_ACCORDIONS)
+                  if key in COMPONENTS and f"{key}-checkbox" in COMPONENTS]
         inputs = [checkpoint, self.output, modules, self.saved] + native + preset_input
         outputs = ([self.accordion, self.audio, self.audio_shift, self.soundtrack, duration, self.status, self.summary,
-                    self.saved, self.reference_media] + native + preset_input)
+                    self.saved, self.reference_media] + native + preset_input
+                   + [component for pair in hidden for component in pair])
 
         def update(value, output, module_values, saved, *values):
             preset_value = values[-1] if preset is not None else None
@@ -266,7 +272,7 @@ class Panel:
                     gr.update(value=f"{frames} frames / {FPS} FPS = {frames / FPS:.2f} seconds" if active else "",
                               visible=active and output == "Video"), status, summary, saved,
                     gr.update(visible=active and ref2va)] + updates + (
-                                  [gr.update()] if preset is not None else [])
+                                  [gr.update()] if preset is not None else []) + hidden_updates(len(hidden), active, leaving)
 
         for event in (checkpoint.change, self.output.change, modules.change):
             event(update, inputs=inputs, outputs=outputs, queue=False, show_progress=False)
@@ -276,6 +282,15 @@ class Panel:
         gr.context.Context.root_block.load(update, inputs=inputs, outputs=outputs, queue=False, show_progress=False)
         self.bound = True
         logger.info("H3 native controls connected for %s.", self.tab)
+
+
+def hidden_updates(count, active, leaving):
+    """For each hidden accordion: the accordion, then its checkbox (the value Forge reads)."""
+    if active:
+        return [gr.update(visible=False), gr.update(value=False)] * count
+    if leaving:
+        return [gr.update(visible=True), gr.update()] * count
+    return [gr.update(), gr.update()] * count
 
 
 def bind_all(trigger="ui_tabs"):

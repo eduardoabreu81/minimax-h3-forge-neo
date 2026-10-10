@@ -116,6 +116,12 @@ class GradioSmoke(unittest.TestCase):
                         for component in panel_native:
                             ui.capture(component)
                         native.append(panel_native)
+                        if tab == "txt2img":
+                            # Forge's InputAccordion: an accordion and the hidden checkbox Forge reads
+                            with gr.Accordion("Hires. fix", elem_id="txt2img_hr") as hires:
+                                pass
+                            ui.capture(hires)
+                            ui.capture(gr.Checkbox(value=True, visible=False, elem_id="txt2img_hr-checkbox"))
                         ui.Panel(tab == "img2img")
                     self.assertEqual(ui.bind_all(), [])
                 self.assertTrue(all(p.bound for p in ui.PANELS))
@@ -144,8 +150,12 @@ class GradioSmoke(unittest.TestCase):
                 self.assertEqual((leave_wan[9]["maximum"], leave_wan[9]["step"], leave_wan[9]["label"]), (241, 16, "Frames"))
                 self.assertEqual(leave_wan[9]["value"], 129)
                 # the UI preset stays free: switching it is how the user leaves H3, and "h3" is a preset of its own
-                self.assertNotIn("interactive", enter_wan[-1])
-                self.assertNotIn("interactive", leave_wan[-1])
+                self.assertNotIn("interactive", enter_wan[14])
+                self.assertNotIn("interactive", leave_wan[14])
+                # Hires. fix is hidden and turned off with H3, shown again after
+                self.assertEqual((enter[15]["visible"], enter[16]["value"]), (False, False))
+                self.assertTrue(leave[15]["visible"])
+                self.assertNotIn("value", leave[16])
                 ui.reset()
 
 
