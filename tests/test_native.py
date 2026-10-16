@@ -378,6 +378,27 @@ class VaeTests(unittest.TestCase):
                 self.assertGreaterEqual(float(out.min()), 0.0)
                 self.assertLessEqual(float(out.max()), 1.0)
 
+    def test_encoder_layers_work_with_offloaded_weights(self):
+        # issue #4: when VRAM is short Forge keeps these weights in fp32 system RAM and turns on manual cast; a
+        # float64 input stands in for the GPU one (both make plain torch layers fail on the stored weights)
+        from forge_h3.native.video_vae import CausalConv3d, TemporalIsolatedGroupNorm
+        torch.manual_seed(0)
+        conv, norm = CausalConv3d(32, 32, kernel_size=3, padding=1), TemporalIsolatedGroupNorm(8, 32)
+        reference_conv, reference_norm = CausalConv3d(32, 32, kernel_size=3, padding=1), TemporalIsolatedGroupNorm(8, 32)
+        reference_conv.load_state_dict(conv.state_dict())
+        reference_norm.load_state_dict(norm.state_dict())
+        reference_conv.double()
+        reference_norm.double()
+        for layer in (conv, norm):
+            self.assertEqual((layer.weight_function, layer.bias_function), ([], []))
+            layer.parameters_manual_cast = True
+        x = torch.randn(1, 32, 2, 8, 8, dtype=torch.float64)
+        with torch.inference_mode():
+            torch.testing.assert_close(norm(x), reference_norm(x))
+            torch.testing.assert_close(conv(x, pre_norm=norm, residual=x),
+                                       reference_conv(x, pre_norm=reference_norm, residual=x))
+        self.assertEqual({conv.weight.dtype, norm.weight.dtype}, {torch.float32})
+
     def test_audio_one_second_is_forty_latents(self):
         from forge_h3.native.audio_vae import MiniMaxH3AudioVAE
         torch.manual_seed(0)

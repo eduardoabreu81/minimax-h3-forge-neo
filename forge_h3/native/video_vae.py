@@ -49,10 +49,19 @@ def _rms_norm(x, weight, eps):
 
 # 3D causal CNN encoder
 
+def _offloadable(layer):
+    """Forge's offload attributes on a layer that subclasses torch's own (defined before using_forge_operations swaps
+    them): with these Forge may keep its weights in system RAM when VRAM is short, and the layer then casts them to
+    the input's device for each call, as Forge's layers do."""
+    layer.parameters_manual_cast = False
+    layer.weight_function, layer.bias_function = [], []
+
+
 class CausalConv3d(nn.Conv3d):
     # reflect spatial padding, causal (zeros, front-only) temporal padding
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0):
         super().__init__(in_channels, out_channels, kernel_size=kernel_size, stride=stride)
+        _offloadable(self)
         self.causal_padding = (padding,) * 3 if isinstance(padding, int) else tuple(padding)
 
     def forward(self, x, pre_norm=None, spatial_pad=None, residual=None):
@@ -66,7 +75,11 @@ class CausalConv3d(nn.Conv3d):
         if pad_t:
             # zero front frames; for a single frame ComfyUI truncates the taps instead, which is the same sum
             x = F.pad(x, (0, 0, 0, 0, pad_t * 2, 0), mode="constant")
-        out = super().forward(x)
+        if self.parameters_manual_cast:
+            with kernels.weight_and_bias(self, x) as (weight, bias):
+                out = self._conv_forward(x, weight, bias)
+        else:
+            out = super().forward(x)
         if residual is not None:
             out = out + residual
         return out
@@ -74,13 +87,23 @@ class CausalConv3d(nn.Conv3d):
 
 class TemporalIsolatedGroupNorm(nn.GroupNorm):
     # GroupNorm with statistics computed per frame (time merged into batch)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        _offloadable(self)
+
+    def _norm(self, x):
+        if self.parameters_manual_cast and self.affine:
+            with kernels.weight_and_bias(self, x) as (weight, bias):
+                return F.group_norm(x, self.num_groups, weight, bias, self.eps)
+        return super().forward(x)
+
     def forward(self, x):
         if x.dim() == 5:
             b, c, t, h, w = x.shape
             x = x.permute(0, 2, 1, 3, 4).reshape(b * t, c, h, w)
-            x = super().forward(x)
+            x = self._norm(x)
             return x.view(b, t, c, h, w).permute(0, 2, 1, 3, 4).contiguous()
-        return super().forward(x)
+        return self._norm(x)
 
 
 def group_norm_3d(num_channels):
