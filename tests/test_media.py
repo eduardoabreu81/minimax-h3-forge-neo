@@ -2,6 +2,7 @@ import importlib.util
 import json
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -132,6 +133,40 @@ class ExportTests(unittest.TestCase):
         with Image.open(path) as image:
             self.assertEqual(image.size, (64, 64))
             self.assertEqual(image.info["parameters"], "Seed: 123, H3 Frames: 5")
+
+
+@unittest.skipUnless(sys.platform == "win32", "Windows ACLs")
+class PermissionTests(unittest.TestCase):
+    """A saved file has the output folder's permissions, as one Forge writes itself (issue #3: a Forge started as
+    administrator saved videos that only administrators could open)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name) / "outputs"
+        self.root.mkdir()
+        # tempfile's folder is itself private: let Users read the outputs, as in a Forge folder
+        subprocess.run(["icacls", str(self.root), "/grant", "*S-1-5-32-545:(OI)(CI)RX"],
+                       check=True, capture_output=True)
+
+    def acl(self, path):
+        lines = subprocess.check_output(["icacls", str(path)], text=True, errors="replace").splitlines()
+        return sorted(line.replace(str(path), "").strip() for line in lines[:-1] if line.strip())
+
+    def test_still_inherits_the_output_folder_permissions(self):
+        reference = self.root / "forge.png"
+        Image.new("RGB", (8, 8)).save(reference)
+        path = export_still(Image.new("RGB", (8, 8)), self.root / "still.png", "")
+        self.assertEqual(self.acl(path), self.acl(reference))
+        self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["forge.png", "still.png"])
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "FFmpeg required")
+    def test_video_inherits_the_output_folder_permissions(self):
+        reference = self.root / "forge.png"
+        Image.new("RGB", (8, 8)).save(reference)
+        path = export_video([Image.new("RGB", (16, 16))] * 3, None, self.root / "clip.mp4")
+        self.assertEqual(self.acl(path), self.acl(reference))
+        self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["clip.mp4", "forge.png"])
 
 
 class FrameTests(unittest.TestCase):

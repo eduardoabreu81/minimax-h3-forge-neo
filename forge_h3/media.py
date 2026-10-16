@@ -6,10 +6,11 @@ sampling a whole clip.
 
 import os
 import re
+import secrets
 import shutil
 import subprocess
-import tempfile
 import wave
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -179,6 +180,24 @@ def frame_array(frames) -> np.ndarray:
     return np.ascontiguousarray(array)
 
 
+@contextmanager
+def _scratch_folder(parent, prefix):
+    """A work folder next to the result that inherits the output folder's permissions. tempfile's folders are private
+    (on Windows only the owner, SYSTEM and Administrators) and a file moved out keeps that, so a Forge started as
+    administrator would save videos the user cannot open."""
+    while True:
+        folder = Path(parent) / f"{prefix}{secrets.token_hex(6)}"
+        try:
+            folder.mkdir()
+            break
+        except FileExistsError:
+            continue
+    try:
+        yield folder
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
 def export_video(frames, audio, output, *, ffmpeg="", infotext="", cancelled=lambda: False, transform=None):
     """frames: [T, H, W, 3] uint8 or PIL images; audio: [channels, samples] at 32 kHz, cut or padded to the clip's
     length, or None; transform: a function applied to each frame on its way to FFmpeg (an upscaler), which must give
@@ -192,8 +211,7 @@ def export_video(frames, audio, output, *, ffmpeg="", infotext="", cancelled=lam
     target = Path(output).resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     executable = find_ffmpeg(ffmpeg)
-    with tempfile.TemporaryDirectory(prefix=".h3-export-", dir=target.parent) as scratch:
-        scratch = Path(scratch)
+    with _scratch_folder(target.parent, ".h3-export-") as scratch:
         encoded = scratch / "result.mp4"
         command = [executable, "-hide_banner", "-loglevel", "error", "-y",
                    "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{width}x{height}", "-framerate", str(FPS),
@@ -249,8 +267,8 @@ def export_still(image, output, infotext):
     target.parent.mkdir(parents=True, exist_ok=True)
     info = PngInfo()
     info.add_text("parameters", infotext)
-    with tempfile.TemporaryDirectory(prefix=".h3-image-", dir=target.parent) as scratch:
-        candidate = Path(scratch) / "result.png"
+    with _scratch_folder(target.parent, ".h3-image-") as scratch:
+        candidate = scratch / "result.png"
         image.save(candidate, format="PNG", pnginfo=info)
         os.replace(candidate, target)
     return str(target)
