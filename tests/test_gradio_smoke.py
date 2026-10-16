@@ -89,7 +89,9 @@ class GradioSmoke(unittest.TestCase):
             (processor / "tokenizer.json").write_text('{}')
             info = types.SimpleNamespace(filename=str(dit), title="Community", name="Community")
             modules = types.ModuleType("modules")
-            modules.shared = types.SimpleNamespace(opts=types.SimpleNamespace(h3_processor_dir=str(processor)))
+            # the h3 preset as the user saved it in Settings (issue #5); img2img left at its defaults
+            modules.shared = types.SimpleNamespace(opts=types.SimpleNamespace(
+                h3_processor_dir=str(processor), h3_t2i_sampler="Euler", h3_t2i_scheduler="Automatic", h3_t2i_cfg=3.5))
             modules.paths = types.SimpleNamespace(models_path=str(root))
             modules.sd_models = types.SimpleNamespace(checkpoint_aliases={"Community": info}, checkpoints_list={"Community": info},
                                                       get_closet_checkpoint_match={"Community": info}.get)
@@ -134,6 +136,11 @@ class GradioSmoke(unittest.TestCase):
                 fn = next(f.fn for f in demo.fns.values() if getattr(f.fn, "__name__", "") == "update")
                 enter = fn("Community", "Video", [p.name for p in components], {"active": False}, 2, 1, "DPM++ 2M", "Automatic", 7, "sd")
                 self.assertTrue(enter[0]["visible"])
+                self.assertEqual([enter[i]["value"] for i in (11, 12, 13)], ["Euler", "Automatic", 3.5])
+                self.assertEqual(ui.preset_settings("img2img"), ("Res Multistep", "Simple", 1.0))
+                modules.shared.opts.h3_t2i_cfg = 0
+                self.assertIsNone(ui.preset_settings("txt2img")[2])
+                modules.shared.opts.h3_t2i_cfg = 3.5
                 self.assertEqual((enter[9]["label"], enter[9]["value"], enter[9]["step"]), ("Frames", 124, 17))
                 # a Community (FL2VA) checkpoint keeps the Ref2VA reference audio hidden
                 self.assertFalse(enter[8]["visible"])

@@ -244,10 +244,10 @@ class Panel:
                 frames = frame_view(True, output, frames)["value"]
                 updates[1] = gr.update(value=1, visible=False)
                 if entering:
-                    # the starting point of the reference workflows; every Forge sampler and schedule works
-                    updates[2] = gr.update(value="Res Multistep")
-                    updates[3] = gr.update(value="Simple")
-                    updates[4] = gr.update(value=1.0)
+                    sampler, scheduler, cfg = preset_settings(self.tab)
+                    updates[2] = gr.update(value=sampler)
+                    updates[3] = gr.update(value=scheduler)
+                    updates[4] = gr.update(value=cfg) if cfg is not None else gr.update()
             elif leaving:
                 updates = [gr.update(**config) for config in saved.get("native", [])]
                 saved.pop("native", None)
@@ -283,6 +283,23 @@ class Panel:
         gr.context.Context.root_block.load(update, inputs=inputs, outputs=outputs, queue=False, show_progress=False)
         self.bound = True
         logger.info("H3 native controls connected for %s.", self.tab)
+
+
+def preset_settings(tab):
+    """The sampler, schedule and CFG saved for the h3 preset in Settings, which start from the reference workflows'
+    (every Forge sampler and schedule works); a CFG of 0 there keeps the current one (None), as Forge's presets do."""
+    kind = "i2i" if tab == "img2img" else "t2i"
+    try:
+        from modules import shared
+        opts = shared.opts
+    except (ImportError, AttributeError):
+        opts = None
+    sampler = getattr(opts, f"h3_{kind}_sampler", None) or "Res Multistep"
+    scheduler = getattr(opts, f"h3_{kind}_scheduler", None) or "Simple"
+    cfg = getattr(opts, f"h3_{kind}_cfg", None)
+    if cfg is None:
+        cfg = 1.0
+    return sampler, scheduler, cfg if cfg > 0 else None
 
 
 def hidden_updates(count, active, leaving):
