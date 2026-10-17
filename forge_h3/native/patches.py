@@ -4,6 +4,7 @@ Every hook hands anything that is not MiniMax H3 to the original Forge Neo funct
 """
 
 import contextlib
+import functools
 import logging
 import os
 
@@ -132,6 +133,9 @@ def _file_backed(name: str, module, storages: set[int]) -> None:
 def _hook_components() -> None:
     original = loader.load_huggingface_component
 
+    # wraps leaves __wrapped__ behind, which inspect.getsource follows: the compat checks of the other extensions
+    # that read Forge's loader source still reach it through this hook
+    @functools.wraps(original)
     def load_huggingface_component(guess, component_name, lib_name, cls_name, repo_path, state_dict):
         if not isinstance(guess, model.MiniMaxH3):
             return original(guess, component_name, lib_name, cls_name, repo_path, state_dict)

@@ -76,7 +76,9 @@ def check() -> list[str]:
         from backend import loader
         from backend.quant_ops import QUANT_ALGOS, ck
 
-        source = inspect.getsource(loader.load_huggingface_component)
+        # the whole module, not load_huggingface_component: an extension that loaded first has already put its own wrapper
+        # there, and a wrapper's source holds none of Forge's branches
+        source = inspect.getsource(loader)
         missing = [b for b in LOADER_BRANCHES if f'"{b}"' not in source]
         if missing:
             problems.append(f"backend.loader has no {', '.join(missing)} branch")
