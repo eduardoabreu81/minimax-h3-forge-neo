@@ -3,7 +3,7 @@
 <div align="center">
 
 [![Forge Neo](https://img.shields.io/badge/Forge-Neo-blue)](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)
-[![Version](https://img.shields.io/badge/Version-0.7.3-brightgreen)](https://github.com/eduardoabreu81/minimax-h3-forge-neo)
+[![Version](https://img.shields.io/badge/Version-0.7.4-brightgreen)](https://github.com/eduardoabreu81/minimax-h3-forge-neo)
 ![Status](https://img.shields.io/badge/Status-Work_in_progress-orange)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-green)](LICENSE)
 
@@ -41,6 +41,13 @@ Generate **videos with sound** with **[MiniMax H3](https://github.com/MiniMax-AI
 ---
 
 ## 🆕 What's New
+
+### v0.7.4 - Fixes
+
+- **Videos open normally on Windows** - a Forge started as administrator no longer saves videos and stills that the normal user cannot open ([#3](https://github.com/eduardoabreu81/minimax-h3-forge-neo/issues/3))
+- **Reference pictures and input images work with a partly offloaded video VAE** - when VRAM is short, encoding no longer stops with `Input type (torch.cuda.FloatTensor) and weight type (torch.FloatTensor) should be the same` ([#4](https://github.com/eduardoabreu81/minimax-h3-forge-neo/issues/4)). Thanks to @theadamdude for the diagnosis and the patch
+- **The h3 preset's sampler, schedule and CFG are honored** - selecting an H3 checkpoint uses the values saved for the h3 preset in Settings instead of resetting them to Res Multistep, Simple and CFG 1 ([#5](https://github.com/eduardoabreu81/minimax-h3-forge-neo/issues/5))
+- **Plays well with other extensions' hooks** - the Forge check no longer breaks when another extension, such as MOSS-Image, loads first and hooks the loader
 
 ### v0.7.3 - GGUF Text Encoder, Upscale, Spectrum
 
