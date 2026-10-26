@@ -240,6 +240,33 @@ def _hook_taesd() -> None:
 
     sd_vae_taesd.decoder_model = decoder_model
 
+    # taeh3 is not an H3 VAE (no encoder, and its decoder gives one frame): with Settings > VAE set to TAESD, Forge
+    # would encode with an SD encoder and save that one frame instead of the video, so H3 always uses the full VAEs
+    original_encoder = sd_vae_taesd.encoder_model
+
+    def encoder_model():
+        if getattr(shared.sd_model, "is_h3", False):
+            return None
+        return original_encoder()
+
+    sd_vae_taesd.encoder_model = encoder_model
+
+    from modules import processing, sd_samplers_common
+    warned = []
+
+    def decode_first_stage(model, x):
+        if not getattr(model, "is_h3", False):
+            return original_decode(model, x)
+        if shared.opts.sd_vae_decode_method != "Full" and not warned:
+            warned.append(True)
+            print("[MiniMax H3] Settings > VAE > VAE for Decoding is TAESD: H3 decodes the video with its full VAE")
+        return sd_samplers_common.samples_to_images_tensor(x, 0, model)
+
+    original_decode = sd_samplers_common.decode_first_stage
+    sd_samplers_common.decode_first_stage = decode_first_stage
+    # processing imported the function by name
+    processing.decode_first_stage = decode_first_stage
+
 
 def apply() -> None:
     global _applied
