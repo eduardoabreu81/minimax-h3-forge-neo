@@ -22,7 +22,7 @@ Generate **videos with sound** with **[MiniMax H3](https://github.com/MiniMax-AI
 </div>
 
 > [!Important]
-> **Work in progress.** Text-to-video with sound, first/last frame, reference pictures, videos and sounds, and motion control with inpainting work. Tested on a 48 GB A40, a 24 GB RTX 4090 and a 16 GB RTX 2000 Ada with 32 GB of system RAM, using the [smaller files](#-installation). Cards under 16 GB have not been tested yet.
+> **Work in progress.** Text-to-video with sound, first/last frame, reference pictures, videos and sounds, and motion control with inpainting work. Tested on a 48 GB A40, a 24 GB RTX 4090 and a 16 GB RTX 2000 Ada with 32 GB of system RAM, using the [smaller files](#-installation). We have not tested cards under 16 GB yet, but [Signal Flag "Z"](https://www.youtube.com/watch?v=eBVHwCJ0DgQ) ran a 704×384, 56-frame clip on a 12 GB RTX 4070 Ti.
 >
 > This extension requires an up-to-date **Forge Neo** (the `neo` branch, revision `d70373e` of 3 October 2026 or later, with comfy-kitchen 0.2.37). On an older version it stays disabled and tells you so in the console - Forge Neo itself keeps working as usual.
 
@@ -41,6 +41,13 @@ Generate **videos with sound** with **[MiniMax H3](https://github.com/MiniMax-AI
 ---
 
 ## 🆕 What's New
+
+### v0.7.5 - Fixes
+
+- **The last frame follows Resize mode** - in img2img it is fitted like the first frame, so **Resize and fill** keeps the whole picture instead of cropping it. Thanks to [Signal Flag "Z"](https://www.youtube.com/watch?v=eBVHwCJ0DgQ) for showing this in their test
+- **Preserve Aspect Ratio works** - the video takes the proportions of the first picture, inside the Width and Height you set
+- **FFmpeg installs by itself** - if your machine has none, the extension installs it when Forge starts
+- **VAE for Decoding set to TAESD** no longer saves one frame instead of the video ([#7](https://github.com/eduardoabreu81/minimax-h3-forge-neo/issues/7))
 
 ### v0.7.4 - Fixes
 

@@ -1,6 +1,6 @@
 # Installation and troubleshooting
 
-Version 0.3.0. MiniMax H3 runs on Forge Neo's own loader, samplers and memory management; the only Python package the extension may install is `imageio-ffmpeg`, when the machine has no FFmpeg. See the [README](../README.md) for the short version, [Performance and Memory](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Performance-and-Memory) for the measured times and the [wiki](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki) for the detailed guides.
+Version 0.7.5. MiniMax H3 runs on Forge Neo's own loader, samplers and memory management; the only Python package the extension may install is `imageio-ffmpeg`, when the machine has no FFmpeg. See the [README](../README.md) for the short version, [Performance and Memory](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Performance-and-Memory) for the measured times and the [wiki](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki) for the detailed guides.
 
 ## Requirements
 
@@ -8,7 +8,7 @@ Version 0.3.0. MiniMax H3 runs on Forge Neo's own loader, samplers and memory ma
 - **FFmpeg** for the MP4 export. If none is on the `PATH`, the extension installs `imageio-ffmpeg` into Forge's Python environment when Forge starts (about 30 MB, internet needed once). To use your own, keep it on the `PATH` or set the full path of the executable in **Settings → MiniMax H3**. Forge started with `--skip-install` installs nothing.
 - **Disk:** about 50 GiB for the four required files.
 - **System RAM:** Forge loads the checkpoint, text encoder and VAEs together, about 50 GiB with the tested files. The A40 test machine had about 50 GB; 15-second clips peaked at 46.3 GiB. Changing the text encoder on a loaded model exceeded it.
-- **GPU:** tested on an NVIDIA A40 (48 GB) and an RTX 4090 (24 GB). On the 4090 every tested set ran 10-second clips without Never OOM; with Kijai's W4A8 checkpoint and Merserk's INT4 text encoder Forge's RSS peaked at 35 GB. Cards under 24 GB are untested.
+- **GPU:** tested on an NVIDIA A40 (48 GB) and an RTX 4090 (24 GB). On the 4090 every tested set ran 10-second clips without Never OOM; with Kijai's W4A8 checkpoint and Merserk's INT4 text encoder Forge's RSS peaked at 35 GB. A 16 GB card with 32 GB of RAM works with the smaller files; we have not tested cards under 16 GB.
 
 ## Install
 
