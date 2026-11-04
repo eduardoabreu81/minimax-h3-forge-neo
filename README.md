@@ -339,7 +339,7 @@ With the default range, a person or object turning on itself may "morph" instead
 - From a picture, describe the motion and the sound, not what the picture already shows
 - With first or last frame, start the prompt with the model's instruction line, which says where each picture sits in the clip - the lines are in the wiki's [Writing Prompts](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Writing-Prompts)
 - With reference pictures, say in the prompt what each one should keep - face, hair, clothes, the shape of an object - and keep `ref2va` in the checkpoint's file name, which is how the extension recognizes it
-- For first and last frame, use pictures with the same proportions as the video; the last frame is cropped to the video size
+- For first and last frame, use pictures with the same proportions as the video. In img2img both follow **Resize mode**: **Resize and fill** keeps the whole picture, and **Preserve Aspect Ratio** gives the video the proportions of the first one. In txt2img the last frame is cropped to the video size
 - With a turbo LoRA on long clips, set **Diffusion in Low Bits** to **Automatic (fp16 LoRA)** to save system RAM; on shorter clips the default **Automatic** is slightly faster
 - For a sharp live preview, set **Live Preview Method** to **TAESD** in Forge's settings - the preview decoder downloads by itself
 - With **motion control**, describe the person and the place, not the moves - a detailed choreography in the prompt wins over the control video

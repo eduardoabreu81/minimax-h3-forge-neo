@@ -81,7 +81,7 @@ class Panel:
                                           elem_id=f"{self.tab}_h3_soundtrack")
             if is_img2img:
                 gr.Markdown("With an FL2VA checkpoint the input image is the **first frame**; for a **last frame** too, add "
-                            "one image to the **ImageStitch Integrated** gallery. With a **Ref2VA** checkpoint the input "
+                            "one image to the **ImageStitch Integrated** gallery; both follow **Resize mode**. With a **Ref2VA** checkpoint the input "
                             "image is `<Picture 1>` and the gallery holds the next reference pictures, up to 9 in all. "
                             "Denoising strength is not used.")
             else:

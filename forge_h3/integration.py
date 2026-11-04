@@ -269,6 +269,7 @@ def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_vi
     mode = components.mode
     if is_img2img:
         validate_img2img(p, mode)
+        keyframes.settle_preserved_aspect(p)
     p.h3_fast = components.dit.variant == "fast"
     if p.h3_fast:
         # its recipe: 8 steps, video shift 10 (audio 3), and the VSA sparse attention it was trained with

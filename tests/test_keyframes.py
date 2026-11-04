@@ -52,13 +52,47 @@ class GalleryTests(unittest.TestCase):
         self.assertEqual(images[0].size, (8, 8))
         self.assertEqual(images[0].convert("RGB").getpixel((0, 0)), (0, 0, 255))
 
-    def test_last_frame_is_cover_cropped_to_the_output(self):
+    def test_txt2img_last_frame_is_cover_cropped_to_the_output(self):
         wide = Image.new("RGBA", (400, 100), (0, 255, 0, 128))
         with patch("builtins.print") as printed:
             frame = keyframes.last_frame(processing(["Video", True, True, [(wide, None), (wide, None)], 1024]), 64, 96)
         self.assertEqual((frame.size, frame.mode), ((64, 96), "RGB"))
         self.assertIn("first one", printed.call_args[0][0])
         self.assertIsNone(keyframes.last_frame(processing(["Video", True, False, [], 1024]), 64, 96))
+
+    def test_img2img_last_frame_follows_the_resize_mode(self):
+        calls = []
+
+        def resize_image(mode, image, width, height):
+            calls.append((mode, image.mode, width, height))
+            return image.resize((width, height))
+
+        images = forge_stubs.module("modules.images", resize_image=resize_image)
+        wide = Image.new("RGBA", (400, 100), (0, 255, 0, 128))
+        with patch.dict(sys.modules, {"modules": forge_stubs.module("modules", images=images), "modules.images": images}):
+            for mode in (0, 1, 2):
+                p = processing(["Video", True, True, [(wide, None)], 1024])
+                p.resize_mode = mode
+                self.assertEqual(keyframes.last_frame(p, 64, 96).size, (64, 96))
+        self.assertEqual(calls, [(mode, "RGB", 64, 96) for mode in (0, 1, 2)])
+
+    def test_preserve_aspect_ratio_settles_the_size_on_the_grid(self):
+        def settle(first_size, width, height, resize_mode=keyframes.PRESERVE_ASPECT):
+            p = types.SimpleNamespace(init_images=[Image.new("RGB", first_size)], width=width, height=height,
+                                      resize_mode=resize_mode)
+            keyframes.settle_preserved_aspect(p)
+            return p.width, p.height, p.resize_mode
+
+        fill = keyframes.RESIZE_AND_FILL
+        # a 4:3 picture in a 16:9 box: the height stays, the width rounds to 32
+        self.assertEqual(settle((1024, 768), 1344, 768), (1024, 768, fill))
+        self.assertEqual(settle((1000, 750), 1344, 768), (1024, 768, fill))
+        # portrait, a smaller picture grows to the box as Forge does, and a side never ends below H3's minimum
+        self.assertEqual(settle((720, 1280), 1344, 768), (448, 768, fill))
+        self.assertEqual(settle((100, 50), 640, 640), (640, 320, fill))
+        self.assertEqual(settle((1000, 10), 640, 640), (640, 64, fill))
+        # the other modes keep the size and the mode they came with
+        self.assertEqual(settle((1024, 768), 1344, 768, resize_mode=2), (1344, 768, 2))
 
     def test_still_image_refuses_keyframes(self):
         with self.assertRaisesRegex(H3Error, "Still image"):

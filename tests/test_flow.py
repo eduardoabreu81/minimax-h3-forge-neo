@@ -110,12 +110,14 @@ def forge_modules(root, files):
                                         state=types.SimpleNamespace(interrupted=False, skipped=False))
     modules.sd_models = forge_stubs.module("modules.sd_models", get_closet_checkpoint_match=lambda value: info)
     modules.rng = forge_stubs.module("modules.rng", ImageRNG=ImageRNG)
+    modules.images = forge_stubs.module("modules.images", resize_image=lambda mode, image, width, height: image.resize((width, height)))
     presets = forge_stubs.module("modules_forge.presets")
     forge = forge_stubs.module("modules_forge", presets=presets,
                                main_entry=forge_stubs.module("modules_forge.main_entry", module_list={}))
     patches = forge_stubs.module("forge_h3.native.patches", begin_sampling=Mock(), end_sampling=Mock())
     return {"modules": modules, "modules.processing": modules.processing, "modules.shared": modules.shared,
-            "modules.sd_models": modules.sd_models, "modules.rng": modules.rng, "modules_forge": forge,
+            "modules.sd_models": modules.sd_models, "modules.rng": modules.rng, "modules.images": modules.images,
+            "modules_forge": forge,
             "modules_forge.presets": presets, "modules_forge.main_entry": forge.main_entry,
             "forge_h3.native.patches": patches}
 
@@ -181,7 +183,7 @@ class FlowTests(unittest.TestCase):
         integration.process(p)
         if encode and isinstance(p, Img2Img):
             # images_tensor_to_samples: the input image, already resized by Forge, in [-1, 1]
-            image = torch.full((1, 3, HEIGHT, WIDTH), 0.25)
+            image = torch.full((1, 3, p.height, p.width), 0.25)
             p.init_latent = self.engine.encode_first_stage(image * 2 - 1)
         cond = self.engine.get_learned_conditioning([p.prompt])
         integration.before_sampling(p, torch.zeros(1, 4, HEIGHT // 8, WIDTH // 8))
@@ -255,6 +257,16 @@ class FlowTests(unittest.TestCase):
         integration._set_sparse_attention(p)
         attention = self.engine.generation.sparse
         self.assertEqual((attention.vsa, attention.topk_ratio), (True, sparse.VSA_KEEP_RATIO))
+
+    def test_preserve_aspect_ratio_gives_the_clip_the_first_frames_proportions(self):
+        p = Img2Img(gallery=Image.new("RGB", (300, 100), "blue"))
+        p.init_images = [Image.new("RGB", (100, 100), "red")]
+        p.resize_mode = keyframes.PRESERVE_ASPECT
+        self.run_until_sampling(p)
+        # a square picture in the 96x64 box: both keyframes and the request agree on the settled size
+        self.assertEqual((p.width, p.height, p.resize_mode), (64, 64, keyframes.RESIZE_AND_FILL))
+        self.assertEqual((p.h3_request.width, p.h3_request.height), (64, 64))
+        self.assertEqual({tuple(kf["latent"].shape) for kf in self.engine.generation.keyframes}, {(1, 24, 1, 4, 4)})
 
     def test_txt2img_gallery_is_the_last_frame_only(self):
         p = Txt2Img(gallery=Image.new("RGB", (64, 64), "green"))
