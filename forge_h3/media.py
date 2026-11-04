@@ -1,4 +1,4 @@
-"""Atomic local exports using Forge's FFmpeg or imageio's bundled executable.
+"""Atomic local exports using the system's FFmpeg or the one imageio-ffmpeg brings (see install.py).
 
 Video frames go to FFmpeg as raw RGB through its standard input: writing them as PNG files first is slower than
 sampling a whole clip.
@@ -36,7 +36,8 @@ def find_ffmpeg(configured=""):
         import imageio_ffmpeg
         executable = imageio_ffmpeg.get_ffmpeg_exe()
     except (ImportError, RuntimeError):
-        raise H3Error("FFmpeg is missing. Install FFmpeg or imageio-ffmpeg, or set H3 FFmpeg executable in Settings.") from None
+        raise H3Error("FFmpeg is missing and could not be installed automatically. Restart Forge with internet access, "
+                      "install FFmpeg, or set H3 FFmpeg executable in Settings.") from None
     return executable
 
 

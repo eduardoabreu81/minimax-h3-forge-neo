@@ -1,11 +1,11 @@
 # Installation and troubleshooting
 
-Version 0.3.0. MiniMax H3 runs on Forge Neo's own loader, samplers and memory management; the extension installs no Python packages. See the [README](../README.md) for the short version, [Performance and Memory](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Performance-and-Memory) for the measured times and the [wiki](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki) for the detailed guides.
+Version 0.3.0. MiniMax H3 runs on Forge Neo's own loader, samplers and memory management; the only Python package the extension may install is `imageio-ffmpeg`, when the machine has no FFmpeg. See the [README](../README.md) for the short version, [Performance and Memory](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Performance-and-Memory) for the measured times and the [wiki](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki) for the detailed guides.
 
 ## Requirements
 
 - **Forge Neo**, `neo` branch. Tested with revision `97b26fb` (2 October 2026, reported as `neo-2.29.2`), Python 3.13, Torch 2.13 with CUDA 13.0 and comfy-kitchen 0.2.36 with its CUDA backend.
-- **FFmpeg** for the MP4 export, on the `PATH` or set in **Settings → MiniMax H3**.
+- **FFmpeg** for the MP4 export. If none is on the `PATH`, the extension installs `imageio-ffmpeg` into Forge's Python environment when Forge starts (about 30 MB, internet needed once). To use your own, keep it on the `PATH` or set the full path of the executable in **Settings → MiniMax H3**. Forge started with `--skip-install` installs nothing.
 - **Disk:** about 50 GiB for the four required files.
 - **System RAM:** Forge loads the checkpoint, text encoder and VAEs together, about 50 GiB with the tested files. The A40 test machine had about 50 GB; 15-second clips peaked at 46.3 GiB. Changing the text encoder on a loaded model exceeded it.
 - **GPU:** tested on an NVIDIA A40 (48 GB) and an RTX 4090 (24 GB). On the 4090 every tested set ran 10-second clips without Never OOM; with Kijai's W4A8 checkpoint and Merserk's INT4 text encoder Forge's RSS peaked at 35 GB. Cards under 24 GB are untested.
@@ -88,7 +88,7 @@ Checked on the A40: first, last, both, CFG 3, a turbo LoRA and Never OOM. Use 76
 | `H3 width and height must be multiples of 32` / `H3 Frames must follow 17n + 5` | Use multiples of 32 for the size; the Frames slider moves in steps of 17 from 5 to 362. |
 | `The img2img input image did not reach H3` | Set **Settings → VAE → VAE for Encoding** to **Full** and check the console for an earlier error. |
 | The process is killed while loading H3 or adding a LoRA | Not enough system RAM. Close other programs, restart Forge before changing the text encoder, and for long clips with a LoRA set **Diffusion in Low Bits** to **Automatic (fp16 LoRA)**. |
-| `FFmpeg is missing` / `H3 FFmpeg executable does not exist` | Install FFmpeg or set its path in **Settings → MiniMax H3**. |
+| `FFmpeg is missing` / `H3 FFmpeg executable does not exist` | The automatic install did not work (the console says why at startup). Restart Forge with internet access, install FFmpeg, or set the full path of the executable in **Settings → MiniMax H3**. |
 | `Select Script: None for H3 generation` | Generation scripts are not supported with H3 yet. |
 
 Report other errors on the [issue tracker](https://github.com/eduardoabreu81/minimax-h3-forge-neo/issues) with the console output.

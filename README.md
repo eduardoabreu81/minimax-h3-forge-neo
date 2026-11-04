@@ -268,7 +268,7 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 | Acc 8-Step LoRA, FL2VA | [MiniMax-H3-FL2VA-Acc-8Step_pruned_comfy](https://huggingface.co/Kijai/MiniMax-H3-experimental/blob/main/loras/MiniMax-H3-FL2VA-Acc-8Step_pruned_comfy.safetensors) (Kijai) | `models/Lora` |
 | Acc 8-Step LoRA, Ref2VA | [MiniMax-H3-Ref2VA-Acc-8Step_pruned_comfy](https://huggingface.co/Kijai/MiniMax-H3-experimental/blob/main/loras/MiniMax-H3-Ref2VA-Acc-8Step_pruned_comfy.safetensors) (Kijai) | `models/Lora` |
 
-6. Make sure **FFmpeg** is installed (or set its path in **Settings** → **MiniMax H3**)
+6. **FFmpeg** writes the videos: if your machine has none, the extension installs it by itself when Forge starts. To use your own, keep it on the `PATH` or set its path in **Settings** → **MiniMax H3**
 7. Pick the **h3** UI preset, the checkpoint, and **all three** of the text encoder, the video VAE and the audio VAE under **VAE / Text Encoder**
 
 > [!Tip]
