@@ -706,7 +706,11 @@ class MiniMaxH3VideoVAE(nn.Module):
         z = z * latents_std + latents_mean
 
         if z.shape[2] == 1:
-            dec = self._finalize_pixels(self._adaptive_decode(z)[:, :, -1:, :, :])
+            # The decoder was trained on whole temporal chunks, and a lone token comes back banded and dark. Repeat the
+            # token into one chunk and keep the first frame after the causal lead-in (Fizgig H3 Still, MIT).
+            group = z.repeat(1, 1, self.tokens_chunk_size, 1, 1)
+            keep = self.frame_pre_padding
+            dec = self._finalize_pixels(self._adaptive_decode(group)[:, :, keep:keep + 1, :, :])
             if output_buffer is None:
                 return dec
             output_buffer.copy_(dec)

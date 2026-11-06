@@ -136,6 +136,9 @@ def decode_middle(model: nn.Sequential, latent: torch.Tensor) -> torch.Tensor:
     """The middle frame [N, 3, 16h, 16w] of an H3 video latent, the same as decode_video gives, decoding only the
     five-token chunk that holds it and the chunks before it that reach its MemBlocks' memory: a constant cost
     whatever the clip length."""
+    if latent.shape[2] == 1:
+        # a single-frame still: one token repeated into a whole chunk, as the full VAE decodes it
+        latent = latent.repeat(1, 1, CHUNK_TOKENS, 1, 1)
     up = time_upscale(model)
     per_chunk = CHUNK_TOKENS * up - (up - 1)  # 17 frames per chunk, H3's grid
     chunks = -(-latent.shape[2] // CHUNK_TOKENS)

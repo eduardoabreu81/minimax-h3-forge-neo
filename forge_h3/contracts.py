@@ -9,7 +9,8 @@ MIN_FRAMES = 5
 MAX_FRAMES = 362
 FRAME_STEP = 17
 DEFAULT_FRAMES = 124
-STILL_FRAMES = MIN_FRAMES
+# H3's native image is one latent frame; the video grid above starts at 5
+STILL_FRAMES = 1
 # the audio stream's flow shift (ComfyUI's ModelSamplingMiniMaxH3 default and range)
 AUDIO_SHIFT = 3.0
 MIN_AUDIO_SHIFT = 0.01
@@ -117,8 +118,7 @@ class GenerationRequest:
         if files > MAX_REF_FILES:
             raise H3Error(f"H3 Ref2VA takes up to {MAX_REF_FILES} reference files in all; {files} were given.")
         if self.output == "Still image" and self.keyframes:
-            raise H3Error("H3 Still image does not take a first or last frame yet. Choose Video, or turn off "
-                          "ImageStitch Integrated.")
+            raise H3Error("H3 Still image takes reference pictures, not a first or last frame.")
         self.width = integer(self.width, "Width")
         self.height = integer(self.height, "Height")
         if min(self.width, self.height) < 64 or self.width % 32 or self.height % 32:

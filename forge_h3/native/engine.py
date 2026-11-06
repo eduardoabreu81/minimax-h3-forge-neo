@@ -333,8 +333,10 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
             raise H3Error(f"The H3 video VAE produced NaN or Inf values: the video would come out black.{advice}")
         generation.frames = pixels[0].float().cpu().movedim(1, 0)
 
-        memory_management.load_model_gpu(self.audio_vae.patcher)
-        waveform = self.audio_vae.first_stage_model.decode(audio.to(self.audio_vae.device, torch.float32))
-        generation.waveform = waveform[0].float().cpu()
+        # a single-frame still has no soundtrack to write
+        if generation.shapes.video[2] > 1:
+            memory_management.load_model_gpu(self.audio_vae.patcher)
+            waveform = self.audio_vae.first_stage_model.decode(audio.to(self.audio_vae.device, torch.float32))
+            generation.waveform = waveform[0].float().cpu()
 
         return generation.frames[:1].mul(2.0).sub(1.0)

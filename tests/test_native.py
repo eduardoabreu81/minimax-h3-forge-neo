@@ -203,6 +203,16 @@ class ForwardTests(unittest.TestCase):
         self.assertEqual(tuple(image.shape), (1, 3, 64, 96))
         self.assertTrue(float(image.min()) >= 0.0 and float(image.max()) <= 1.0)
 
+    def test_taeh3_previews_a_single_frame_as_a_repeated_chunk(self):
+        from forge_h3.native import taeh3
+        model = taeh3.video_decoder()
+        latent = torch.randn(1, 24, 1, 4, 6)
+        with torch.inference_mode():
+            single = taeh3.decode_middle(model, latent)
+            chunk = taeh3.decode_middle(model, latent.repeat(1, 1, taeh3.CHUNK_TOKENS, 1, 1))
+        self.assertEqual(tuple(single.shape), (1, 3, 64, 96))
+        self.assertTrue(torch.equal(single, chunk))
+
     def test_text_token_tags_mark_the_vision_blocks(self):
         from forge_h3.native.streams import text_token_tags
         self.assertIsNone(text_token_tags(7, []))
@@ -377,6 +387,27 @@ class VaeTests(unittest.TestCase):
                 self.assertEqual(tuple(out.shape), (1, 3, pixel_frames(z.shape[2]), 64, 96))
                 self.assertGreaterEqual(float(out.min()), 0.0)
                 self.assertLessEqual(float(out.max()), 1.0)
+
+    def test_single_frame_decodes_as_a_repeated_chunk(self):
+        from forge_h3.native.video_vae import MiniMaxH3VideoVAE
+        model = MiniMaxH3VideoVAE(ch=32, num_layers=1)
+        seen = []
+
+        def decode(group):
+            seen.append(group)
+            # each pixel frame [B, 3, 4T, H, W] tells its index, to see which one is kept
+            frames = torch.arange(group.shape[2] * model.vae_ratio_t, dtype=torch.float32).view(1, 1, -1, 1, 1)
+            return frames.expand(1, 3, -1, group.shape[3] * 16, group.shape[4] * 16).clone()
+
+        model._adaptive_decode = decode
+        latent = torch.randn(1, 24, 1, 4, 6)
+        with torch.inference_mode():
+            out = model.decode(latent)
+        self.assertEqual(seen[0].shape, (1, 24, model.tokens_chunk_size, 4, 6))
+        self.assertTrue(torch.equal(seen[0][:, :, 0], seen[0][:, :, -1]))
+        self.assertEqual(tuple(out.shape), (1, 3, 1, 64, 96))
+        expected = model._finalize_pixels(torch.full((1, 3, 1, 64, 96), float(model.frame_pre_padding)))
+        self.assertTrue(torch.equal(out, expected))
 
     def test_encoder_layers_work_with_offloaded_weights(self):
         # issue #4: when VRAM is short Forge keeps these weights in fp32 system RAM and turns on manual cast; a

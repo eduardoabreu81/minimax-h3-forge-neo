@@ -255,9 +255,9 @@ class RequestTests(unittest.TestCase):
         request = GenerationRequest(frames=124)
         self.assertAlmostEqual(request.duration, 124 / 24)
 
-    def test_still_image_uses_five_frames(self):
+    def test_still_image_uses_one_frame(self):
         request = GenerationRequest(output="Still image", frames=124)
-        self.assertEqual(request.frames, 5)
+        self.assertEqual(request.frames, 1)
         self.assertFalse(request.include_audio)
 
     def test_audio_shift_is_checked(self):
@@ -300,9 +300,9 @@ class RequestTests(unittest.TestCase):
         for frame in (124, -125):
             with self.assertRaisesRegex(H3Error, "outside the clip's 124 frames"):
                 GenerationRequest(frames=124, guide_frame=frame)
-        # Still image makes a 5-frame clip
-        with self.assertRaisesRegex(H3Error, "outside the clip's 5 frames"):
-            GenerationRequest(output="Still image", frames=124, guide_frame=5)
+        # Still image is one frame
+        with self.assertRaisesRegex(H3Error, "outside the clip's 1 frames"):
+            GenerationRequest(output="Still image", frames=124, guide_frame=1)
         with self.assertRaisesRegex(H3Error, "Guide frame must be an integer"):
             GenerationRequest(guide_frame=1.5)
 

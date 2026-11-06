@@ -69,8 +69,7 @@ class Panel:
         self.is_img2img = is_img2img
         self.saved = gr.State({"active": False})
         with gr.Accordion("MiniMax H3", open=False, visible=False, elem_id=f"{self.tab}_h3_panel") as self.accordion:
-            self.output = gr.Radio(["Video", "Still image"], value="Video", label="Output",
-                                   visible=not is_img2img, elem_id=f"{self.tab}_h3_output")
+            self.output = gr.Radio(["Video", "Still image"], value="Video", label="Output", elem_id=f"{self.tab}_h3_output")
             self.audio = gr.Checkbox(value=True, label="Include generated audio", elem_id=f"{self.tab}_h3_audio")
             # the audio stream's own flow shift; Shift (the h3 preset slider) is the video one
             self.audio_shift = gr.Slider(minimum=1.0, maximum=20.0, step=0.5, value=AUDIO_SHIFT, label="Audio shift",
@@ -83,7 +82,8 @@ class Panel:
                 gr.Markdown("With an FL2VA checkpoint the input image is the **first frame**; for a **last frame** too, add "
                             "one image to the **ImageStitch Integrated** gallery; both follow **Resize mode**. With a **Ref2VA** checkpoint the input "
                             "image is `<Picture 1>` and the gallery holds the next reference pictures, up to 9 in all. "
-                            "Denoising strength is not used.")
+                            "**Still image** edits with any H3 checkpoint: the input image is `<Picture 1>` and the "
+                            "gallery holds the next pictures. Denoising strength is not used.")
             else:
                 gr.Markdown("With an FL2VA checkpoint, one image in the **ImageStitch Integrated** gallery is the **last "
                             "frame** (img2img gives the first). With a **Ref2VA** checkpoint the gallery holds up to 9 "

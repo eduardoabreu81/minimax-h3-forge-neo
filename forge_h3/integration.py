@@ -14,6 +14,7 @@ from .contracts import (
     AUDIO_SHIFT,
     FPS,
     GENERATED_SOUNDTRACK,
+    MIN_FRAMES,
     GenerationRequest,
     H3Error,
     set_pending_error,
@@ -267,6 +268,13 @@ def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_vi
     overrides = getattr(p, "override_settings", {})
     components = resolve_components(info.filename, module_paths(overrides.get("forge_additional_modules", shared.opts.forge_additional_modules)))
     mode = components.mode
+    still = output == "Still image"
+    if still and mode == "fl2va" and (is_img2img or references.collect(p, is_img2img)):
+        # editing a still conditions on the pictures as references, with any H3 checkpoint (ComfyUI's
+        # MiniMaxH3ReferenceToVideo in Fizgig H3 Still's edit workflow); audio and video references stay Ref2VA's
+        if ref_audios or ref_videos or any(ref_media or ()):
+            raise H3Error("Reference audio and videos need a Ref2VA checkpoint.")
+        mode = "ref2va"
     if is_img2img:
         validate_img2img(p, mode)
         keyframes.settle_preserved_aspect(p)
@@ -293,7 +301,8 @@ def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_vi
     if mode == "ref2va":
         # decoded only once the request is valid; a reference video keeps at most the clip's own length
         audios = references.collect_audios(ref_audios, ffmpeg)
-        videos = references.collect_videos(ref_videos, request.frames, bool(keep_soundtrack), ffmpeg)
+        # a still is one frame, but a reference video still needs the shortest grid length
+        videos = references.collect_videos(ref_videos, max(request.frames, MIN_FRAMES), bool(keep_soundtrack), ffmpeg)
     if guide:
         p.h3_guide = references.collect_guide(request.guide_index, request.frames, p.width, p.height, guide["video"],
                                               guide["audio"], guide["soundtrack"], ffmpeg)
@@ -345,7 +354,8 @@ def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_vi
         conditioning += ", " + control_summary(p.h3_controls)
     if p.h3_soundtrack is not None:
         conditioning += f", soundtrack from the {soundtrack.lower()}"
-    print(f"[MiniMax H3] {request.output.lower()}: {request.frames} frames at {request.width}x{request.height}, {audio}{conditioning}")
+    length = "" if still else f"{request.frames} frames at "
+    print(f"[MiniMax H3] {request.output.lower()}: {length}{request.width}x{request.height}, {audio}{conditioning}")
 
 
 def process(p):

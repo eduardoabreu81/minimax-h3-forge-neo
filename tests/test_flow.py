@@ -457,7 +457,7 @@ class FlowTests(unittest.TestCase):
                 integration.before_process(Txt2Img(), "Video", True, 3.0, (), ("b.mp4", "b.mp4", "a.mp4"))
             with self.assertRaisesRegex(H3Error, r"at least 2 seconds; short.mp4 lasts 1.5"):
                 integration.before_process(Txt2Img(), "Video", True, 3.0, (), ("short.mp4",))
-            # a 5-frame Still image cuts every reference video to 5 frames
+            # a Still image cuts every reference video to the shortest grid length, 5 frames
             p = Txt2Img()
             integration.before_process(p, "Still image", True, 3.0, (), ("tiny.mp4",))
             self.assertEqual(p.h3_reference_videos[0].frames.shape[0], 5)
@@ -762,9 +762,58 @@ class FlowTests(unittest.TestCase):
         with self.assertRaisesRegex(H3Error, "latent upscale"):
             integration.before_process(p, "Video", True)
 
-    def test_still_image_refuses_a_gallery_last_frame(self):
-        with self.assertRaisesRegex(H3Error, "Still image"):
-            integration.before_process(Txt2Img(gallery=Image.new("RGB", (64, 64))), "Still image", True)
+    def test_still_image_generates_one_frame_without_audio_decoding(self):
+        p = Txt2Img()
+        integration.before_process(p, "Still image", True)
+        p.sd_model = self.engine
+        integration.process(p)
+        integration.before_sampling(p, torch.zeros(1, 4, HEIGHT // 8, WIDTH // 8))
+        generation = self.engine.generation
+        self.assertEqual((p.h3_request.frames, p.h3_request.mode), (1, "fl2va"))
+        self.assertEqual(generation.shapes.video, (1, 24, 1, HEIGHT // 16, WIDTH // 16))
+        self.assertEqual(generation.shapes.audio, (1, 32, 2, 2))
+        cond = self.engine.get_learned_conditioning([p.prompt])
+        dit = self.engine.forge_objects.unet.model.diffusion_model
+        out = dit(p.modified_noise, torch.tensor([900.0]), cond[0].unsqueeze(0))
+        self.assertEqual(out.shape, p.modified_noise.shape)
+        self.assertTrue(torch.isfinite(out).all())
+        image = self.engine.decode_first_stage(p.modified_noise)
+        self.assertEqual(tuple(image.shape), (1, 3, HEIGHT, WIDTH))
+        self.assertEqual(generation.frames.shape[0], 1)
+        self.assertIsNone(generation.waveform)
+
+    def test_still_image_edits_with_an_fl2va_checkpoint(self):
+        p = Img2Img(gallery=Image.new("RGB", (300, 100), "blue"))
+        integration.before_process(p, "Still image", True)
+        self.assertEqual(p.h3_request.mode, "ref2va")
+        self.assertEqual(p.h3_request.references, 2)
+        self.assertFalse(p.h3_request.first_frame or p.h3_request.last_frame)
+        self.assertEqual((p.batch_size, p.denoising_strength), (1, 1.0))
+        p.sd_model = self.engine
+        integration.process(p)
+        self.assertEqual(len(self.engine.references), 2)
+        p.init_latent = self.engine.encode_first_stage(torch.zeros(1, 3, HEIGHT, WIDTH))
+        self.assertIsNone(self.engine.first_frame)
+        cond = self.engine.get_learned_conditioning([p.prompt])
+        self.assertEqual(len(self.engine.text_processing_engine_h3.images), 2)
+        integration.before_sampling(p, torch.zeros(1, 4, HEIGHT // 8, WIDTH // 8))
+        generation = self.engine.generation
+        self.assertEqual(generation.shapes.video[2], 1)
+        self.assertEqual([ref["kind"] for ref in generation.refs], ["image", "image"])
+        self.assertEqual(generation.keyframes, [])
+        dit = self.engine.forge_objects.unet.model.diffusion_model
+        out = dit(p.modified_noise, torch.tensor([900.0]), cond[0].unsqueeze(0))
+        self.assertTrue(torch.isfinite(out).all())
+
+    def test_still_image_takes_a_gallery_picture_in_txt2img(self):
+        p = Txt2Img(gallery=Image.new("RGB", (64, 64)))
+        integration.before_process(p, "Still image", True)
+        self.assertEqual((p.h3_request.mode, p.h3_request.references), ("ref2va", 1))
+
+    def test_still_image_needs_ref2va_for_reference_audio_and_video(self):
+        p = Img2Img()
+        with self.assertRaisesRegex(H3Error, "need a Ref2VA checkpoint"):
+            integration.before_process(p, "Still image", True, 3.0, ("a.flac",))
 
 
 if __name__ == "__main__":

@@ -74,7 +74,7 @@ Outside the h3 preset, the Shift slider belongs to the other preset (for example
 - **img2img:** the input image is the first frame, resized by Forge's **Resize mode**. Denoising strength is ignored (H3 always generates the whole clip). The "Just resize (latent upscale)" mode is refused.
 - **Last frame:** turn on **ImageStitch Integrated** and add one image to its gallery; it is cropped to the output size. With more than one image, the first is used.
 - **txt2img + ImageStitch:** last frame only.
-- Still image output does not take keyframes yet.
+- **Still image:** the input image and the gallery are reference pictures (`<Picture 1>`, `<Picture 2>` and so on), with any H3 checkpoint, not a first or last frame. It renders a true single frame, so the same seed gives a different picture than the old 5-frame still. Covered by the CPU tests, not yet checked with the real models on a GPU: please open an issue if something looks wrong.
 
 Checked on the A40: first, last, both, CFG 3, a turbo LoRA and Never OOM. Use 768 on the short side for clean results; see the wiki's [First and Last Frame](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/First-and-Last-Frame) page.
 

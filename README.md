@@ -173,7 +173,7 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 - Picture and sound are generated together and saved as one MP4, shown in Forge's usual result area
 - Up to **15 seconds** per clip, at 24 frames per second
 - **Include generated audio** checkbox for a silent video
-- **Still image** output for a single picture from the model
+- **Still image** output: a true single frame, in txt2img or edited from an input image and reference pictures, with the method from [Fizgig H3 Still](https://github.com/shootthesound/ComfyUI-Fizgig-H3-Still) by Peter Neill (MIT)
 
 ### 🖼️ First and Last Frame
 
