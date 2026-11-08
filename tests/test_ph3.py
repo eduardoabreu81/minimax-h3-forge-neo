@@ -6,6 +6,7 @@ The fixture holds only tensor names, dtypes and shapes of PrunaAI/P-H3-Image-Com
 
 import gzip
 import importlib
+import importlib.util
 import json
 import sys
 import tempfile
@@ -427,6 +428,138 @@ class PH3FlowTests(unittest.TestCase):
             integration.before_process(Txt2Img(), "Video", True)
         with self.assertRaisesRegex(H3Error, "pictures only"):
             integration.before_process(Txt2Img(), "Still image", True, ref_audios=("voice.wav",))
+
+
+
+class PresetTests(unittest.TestCase):
+    """The h3 and ph3 UI presets, registered through Forge Neo's own presets.register (here a stand-in that makes the
+    same option names as the current neo branch)."""
+
+    def setUp(self):
+        from enum import Enum
+
+        class PresetArch(Enum):
+            sd = 1
+            flux = 2
+
+        shifts = {}
+
+        def register(templates):
+            for arch in PresetArch:
+                name = arch.name
+                templates.update({f"forge_checkpoint_{name}": types.SimpleNamespace(default=None),
+                                  f"forge_additional_modules_{name}": types.SimpleNamespace(default=[])})
+                for key in ("t2i_sampler", "t2i_step", "t2i_cfg", "t2i_width", "i2i_width", "t2i_height", "i2i_height"):
+                    templates[f"{name}_{key}"] = types.SimpleNamespace(default=0)
+                if arch in shifts:
+                    templates[f"{name}_t2i_dcfg"] = types.SimpleNamespace(default=shifts[arch])
+
+        self.forge = forge_stubs.module("modules_forge.presets", PresetArch=PresetArch, SAMPLERS={}, SCHEDULERS={},
+                                        STEPS={}, CFG={}, SHIFT=shifts, register=register)
+        self.added = {}
+        opts = types.SimpleNamespace(data_labels=self.added, add_option=lambda key, info: self.added.__setitem__(key, info))
+        modules = forge_stubs.module("modules", shared=forge_stubs.module("modules.shared", opts=opts))
+        # start/addCleanup rather than enterContext, so the test also runs on Python 3.10 without torch
+        patcher = patch.dict(sys.modules, {
+            "modules_forge": forge_stubs.module("modules_forge", presets=self.forge), "modules_forge.presets": self.forge,
+            "modules": modules, "modules.shared": modules.shared})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        sys.modules.pop("forge_h3.native.presets", None)
+        self.addCleanup(sys.modules.pop, "forge_h3.native.presets", None)
+        self.presets = importlib.import_module("forge_h3.native.presets")
+
+    def test_both_presets_and_only_their_options(self):
+        self.presets.register()
+        arch = self.forge.PresetArch
+        self.assertEqual([m.name for m in arch], ["sd", "flux", "h3", "ph3"])
+        h3, ph3 = arch["h3"], arch["ph3"]
+        self.assertEqual((self.forge.SAMPLERS[h3], self.forge.STEPS[h3], self.forge.SHIFT[h3]), ("Res Multistep", 20, 12.0))
+        self.assertEqual((self.forge.SAMPLERS[ph3], self.forge.STEPS[ph3], self.forge.CFG[ph3]), ("Euler", 8, 1.0))
+        # its own sigma grid and shifts: no Shift slider
+        self.assertNotIn(ph3, self.forge.SHIFT)
+        # each preset keeps its own checkpoint and VAE / Text Encoder selection, which is the point of a second preset
+        for name in ("forge_checkpoint_h3", "forge_additional_modules_h3", "forge_checkpoint_ph3",
+                     "forge_additional_modules_ph3", "ph3_t2i_sampler", "h3_t2i_dcfg"):
+            self.assertIn(name, self.added)
+        self.assertFalse([k for k in self.added if "flux" in k or k.endswith("_sd") or k.startswith("sd_")])
+        self.assertNotIn("ph3_t2i_dcfg", self.added)
+        # P-H3-Image starts at 4 megapixels; H3 keeps Forge's "unchanged" size
+        self.assertEqual({self.added[f"ph3_{k}"].default for k in ("t2i_width", "i2i_width", "t2i_height", "i2i_height")},
+                         {2048})
+        self.assertEqual(self.added["h3_t2i_width"].default, 0)
+        # registering again adds nothing twice
+        count = len(self.added)
+        self.presets.register()
+        self.assertEqual(([m.name for m in arch], len(self.added)), (["sd", "flux", "h3", "ph3"], count))
+
+
+@unittest.skipUnless(importlib.util.find_spec("gradio"), "Gradio is optional for CPU tests")
+class PanelTests(unittest.TestCase):
+    """The H3 panel when the selected files switch between H3 and P-H3-Image under one checkpoint (real Gradio 4.40
+    blocks, as in test_gradio_smoke)."""
+
+    def test_ph3_files_lock_still_image_and_bring_the_ph3_settings(self):
+        import gradio as gr
+
+        from forge_h3 import ui
+        h3_headers, ph3_headers = compact_headers("h3_headers.json.gz"), compact_headers("ph3_headers.json.gz")
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+
+            def file(name, source):
+                return checkpoint(root / f"{name}.safetensors", tensors(source[name]))
+
+            dit = file("minimax_h3_fl2va_pruned_int8_convrot", h3_headers)
+            h3_files = [file(n, h3_headers) for n in ("qwen3vl_32b_minimax_h3_int8_convrot", "minimax_h3_video_vae_fp16",
+                                                      "minimax_h3_audio_vae_fp32")]
+            ph3_files = [file(n, ph3_headers) for n in ("p-h3-image_text_encoder_int8_convrot", "p-h3-image_vae_bf16")]
+            info = types.SimpleNamespace(filename=str(dit), title="H3", name="H3")
+            modules = types.ModuleType("modules")
+            modules.shared = types.SimpleNamespace(opts=types.SimpleNamespace(ph3_t2i_cfg=1.0))
+            modules.sd_models = types.SimpleNamespace(get_closet_checkpoint_match={"H3": info}.get)
+            forge = types.ModuleType("modules_forge")
+            forge.main_entry = types.SimpleNamespace(module_list={p.name: str(p) for p in h3_files + ph3_files})
+            presets = types.ModuleType("modules_forge.presets")
+            presets.is_video = lambda preset: 1
+            with patch.dict(sys.modules, {"modules": modules, "modules_forge": forge, "modules_forge.presets": presets}):
+                ui.reset()
+                self.addCleanup(ui.reset)
+                with gr.Blocks() as demo:
+                    for component in (gr.Dropdown(["Other", "H3"], value="Other", elem_id="setting_sd_model_checkpoint"),
+                                      gr.Dropdown([p.name for p in h3_files + ph3_files], multiselect=True,
+                                                  elem_id="setting_sd_modules"),
+                                      gr.Dropdown(["h3", "ph3"], value="ph3", elem_id="forge_ui_preset"),
+                                      gr.Slider(1, 8, value=1, elem_id="txt2img_batch_size"),
+                                      gr.Slider(1, 128, value=1, elem_id="txt2img_batch_count"),
+                                      gr.Dropdown(["Euler", "Res Multistep"], value="Euler", elem_id="txt2img_sampling"),
+                                      gr.Dropdown(["Simple"], value="Simple", elem_id="txt2img_scheduler"),
+                                      gr.Slider(1, 24, value=1, elem_id="txt2img_cfg_scale")):
+                        ui.capture(component)
+                    ui.Panel(False)
+                    ui.bind_all()
+                fn = next(f.fn for f in demo.fns.values() if getattr(f.fn, "__name__", "") == "update")
+                native = (1, 1, "Euler", "Simple", 1)
+                enter = fn("H3", "Video", [p.name for p in ph3_files], {"active": False}, *native, "ph3")
+                self.assertIn("P-H3-Image", enter[6])
+                self.assertEqual((enter[-1]["value"], enter[-1]["interactive"]), ("Still image", False))
+                self.assertEqual([enter[i]["value"] for i in (11, 12, 13)], ["Euler", "Simple", 1.0])
+                self.assertIn("P-H3-Image makes still images", enter[5])
+                # sound and length are hidden: a still
+                self.assertFalse(enter[1]["visible"] or enter[2]["visible"] or enter[4]["visible"])
+                # the same checkpoint with H3's files: the h3 preset's settings, and Output free again
+                back = fn("H3", "Still image", [p.name for p in h3_files], enter[7], *native, "ph3")
+                self.assertEqual([back[i]["value"] for i in (11, 12, 13)], ["Res Multistep", "Simple", 1.0])
+                self.assertEqual(back[-1], {"__type__": "update", "interactive": True})
+                self.assertIn("single frame", back[5])
+                # nothing changes while the files stay the same
+                again = fn("H3", "Still image", [p.name for p in h3_files], back[7], *native, "ph3")
+                self.assertNotIn("value", again[11])
+                self.assertEqual(again[-1], {"__type__": "update"})
+                # mixed files: the message, and the last variant is kept
+                mixed = fn("H3", "Still image", [p.name for p in ph3_files + h3_files[2:]], enter[7], *native, "ph3")
+                self.assertIn("mixed", mixed[5])
+                self.assertEqual(mixed[-1]["value"], "Still image")
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ from .contracts import (
     AUDIO_SHIFT,
     DEFAULT_FRAMES,
     FPS,
+    H3,
     MAX_REF_AUDIOS,
     MAX_REF_VIDEOS,
     PH3_IMAGE,
@@ -24,6 +25,9 @@ from .upscale import OFF as UPSCALE_OFF
 from .upscale import upscaler_names
 
 COMPONENTS = {}
+# the UI presets the extension adds (native/presets.py) and the sampler and schedule each starts from
+H3_PRESET, PH3_PRESET = "h3", "ph3"
+PRESET_DEFAULTS = {H3_PRESET: ("Res Multistep", "Simple"), PH3_PRESET: ("Euler", "Simple")}
 NATIVE_CONTROLS = ("batch_size", "batch_count", "sampling", "scheduler", "cfg_scale")
 # Forge's InputAccordions that do nothing for H3 video, by elem_id after the tab: Hires. fix, and the Refiner when
 # Settings shows it (Forge Neo's processing script names it just "enable"); hidden and turned off while an H3
@@ -216,7 +220,7 @@ class Panel:
         inputs = [checkpoint, self.output, modules, self.saved] + native + preset_input
         outputs = ([self.accordion, self.audio, self.audio_shift, self.soundtrack, duration, self.status, self.summary,
                     self.saved, self.reference_media] + native + preset_input
-                   + [component for pair in hidden for component in pair])
+                   + [component for pair in hidden for component in pair] + [self.output])
 
         def update(value, output, module_values, saved, *values):
             preset_value = values[-1] if preset is not None else None
@@ -238,33 +242,19 @@ class Panel:
                 if preset_value is not None:
                     from modules_forge.presets import is_video
                     saved["native"][0].update(preset_frame_view(is_video(preset_value), values[0]))
-            updates = [gr.update() for _ in native]
-            frames = values[0]
-            if active:
-                frames = DEFAULT_FRAMES if entering else frames
-                updates[0] = gr.update(**frame_view(True, output, frames))
-                frames = frame_view(True, output, frames)["value"]
-                updates[1] = gr.update(value=1, visible=False)
-                if entering:
-                    sampler, scheduler, cfg = preset_settings(self.tab)
-                    updates[2] = gr.update(value=sampler)
-                    updates[3] = gr.update(value=scheduler)
-                    updates[4] = gr.update(value=cfg) if cfg is not None else gr.update()
-            elif leaving:
-                updates = [gr.update(**config) for config in saved.get("native", [])]
-                saved.pop("native", None)
-            saved["active"] = active
             summary = ""
             ref2va = False
+            variant = None
             if active:
                 try:
                     from .integration import module_paths
                     from .models import resolve_components
                     components = resolve_components(info.filename, module_paths(module_values))
+                    variant = components.variant
                     ref2va = components.mode == "ref2va"
                     mode = ("**Mode:** Ref2VA, reference pictures" if components.mode == "ref2va"
                             else "**Mode:** FL2VA, first and last frame")
-                    if components.variant == PH3_IMAGE:
+                    if variant == PH3_IMAGE:
                         ref2va = False
                         mode = "**Mode:** P-H3-Image, still images from text or edited from pictures"
                     summary = "  \n".join([mode] + [f"**{ROLE_LABELS[m.role].title()}:** {html.escape(m.path.name)} ({m.quantization})"
@@ -272,13 +262,58 @@ class Panel:
                     error = ""
                 except H3Error as exc:
                     error = str(exc)
-            status = html.escape(error) if error else ("H3 generates audio jointly. This checkbox controls audio in the exported video." if output == "Video" else "Still image uses the first frame of a 5-frame H3 generation.")
+            # the variant the selected files make; while they cannot be resolved, the last one stays
+            previous = saved.get("variant")
+            current = (variant or previous or H3) if active else None
+            ph3 = current == PH3_IMAGE
+            # P-H3-Image makes still images only
+            if ph3:
+                output = "Still image"
+            updates = [gr.update() for _ in native]
+            frames = values[0]
+            if active:
+                frames = DEFAULT_FRAMES if entering else frames
+                updates[0] = gr.update(**frame_view(True, output, frames))
+                frames = frame_view(True, output, frames)["value"]
+                updates[1] = gr.update(value=1, visible=False)
+                # the preset's sampler, schedule and CFG on entering H3, and when the files switch between H3 and
+                # P-H3-Image (Forge's own preset switch brings its settings itself)
+                if entering or (variant is not None and previous is not None and variant != previous):
+                    sampler, scheduler, cfg = preset_settings(self.tab, PH3_PRESET if ph3 else H3_PRESET)
+                    updates[2] = gr.update(value=sampler)
+                    updates[3] = gr.update(value=scheduler)
+                    updates[4] = gr.update(value=cfg) if cfg is not None else gr.update()
+            elif leaving:
+                updates = [gr.update(**config) for config in saved.get("native", [])]
+                saved.pop("native", None)
+            saved["active"] = active
+            if current is None:
+                saved.pop("variant", None)
+            else:
+                saved["variant"] = current
+            if ph3:
+                output_update = gr.update(value="Still image", interactive=False)
+            elif previous == PH3_IMAGE:
+                output_update = gr.update(interactive=True)
+            else:
+                output_update = gr.update()
+            if error:
+                status = html.escape(error)
+            elif ph3:
+                status = ("P-H3-Image makes still images: from text, or in img2img an edit of the input image with the "
+                          "gallery pictures as references. Use Euler, 8 steps and CFG 1 (the ph3 preset).")
+            elif output == "Video":
+                status = "H3 generates audio jointly. This checkbox controls audio in the exported video."
+            else:
+                status = ("Still image renders a single frame; in img2img the input image and the gallery are pictures "
+                          "to edit.")
             return [gr.update(visible=active), gr.update(visible=active and output == "Video"),
                     gr.update(visible=active and output == "Video"), gr.update(visible=active and output == "Video"),
                     gr.update(value=f"{frames} frames / {FPS} FPS = {frames / FPS:.2f} seconds" if active else "",
                               visible=active and output == "Video"), status, summary, saved,
                     gr.update(visible=active and ref2va)] + updates + (
-                                  [gr.update()] if preset is not None else []) + hidden_updates(len(hidden), active, leaving)
+                                  [gr.update()] if preset is not None else []) + hidden_updates(len(hidden), active, leaving) + [
+                                  output_update]
 
         for event in (checkpoint.change, self.output.change, modules.change):
             event(update, inputs=inputs, outputs=outputs, queue=False, show_progress=False)
@@ -290,18 +325,20 @@ class Panel:
         logger.info("H3 native controls connected for %s.", self.tab)
 
 
-def preset_settings(tab):
-    """The sampler, schedule and CFG saved for the h3 preset in Settings, which start from the reference workflows'
-    (every Forge sampler and schedule works); a CFG of 0 there keeps the current one (None), as Forge's presets do."""
+def preset_settings(tab, preset=H3_PRESET):
+    """The sampler, schedule and CFG saved for the h3 (or ph3) preset in Settings, which start from the reference
+    workflows' (every Forge sampler and schedule works); a CFG of 0 there keeps the current one (None), as Forge's
+    presets do."""
     kind = "i2i" if tab == "img2img" else "t2i"
     try:
         from modules import shared
         opts = shared.opts
     except (ImportError, AttributeError):
         opts = None
-    sampler = getattr(opts, f"h3_{kind}_sampler", None) or "Res Multistep"
-    scheduler = getattr(opts, f"h3_{kind}_scheduler", None) or "Simple"
-    cfg = getattr(opts, f"h3_{kind}_cfg", None)
+    default_sampler, default_scheduler = PRESET_DEFAULTS[preset]
+    sampler = getattr(opts, f"{preset}_{kind}_sampler", None) or default_sampler
+    scheduler = getattr(opts, f"{preset}_{kind}_scheduler", None) or default_scheduler
+    cfg = getattr(opts, f"{preset}_{kind}_cfg", None)
     if cfg is None:
         cfg = 1.0
     return sampler, scheduler, cfg if cfg > 0 else None

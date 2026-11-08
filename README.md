@@ -45,7 +45,7 @@ Generate **videos with sound** with **[MiniMax H3](https://github.com/MiniMax-AI
 ### v0.8.0 - Still Images and P-H3-Image
 
 - **Still image renders a true single frame** - instead of the first frame of a 5-frame clip, so the same seed gives a different picture than before. In img2img it edits: the input image is `<Picture 1>` and the **ImageStitch Integrated** gallery holds the next pictures, with any H3 checkpoint
-- **[P-H3-Image](https://huggingface.co/PrunaAI/P-H3-Image-Comfy)** by PrunaAI ([#8](https://github.com/eduardoabreu81/minimax-h3-forge-neo/issues/8)) - the image-only derivative of H3, with its own text encoder and VAE. Select its files and H3 makes stills from text, or edits a picture with up to 8 more as references. It is recognized from the files you pick; H3 itself works exactly as before. **Experimental:** checked on the CPU against the published files and against ComfyUI's code, not yet run on a GPU - please report how it goes in [#8](https://github.com/eduardoabreu81/minimax-h3-forge-neo/issues/8)
+- **[P-H3-Image](https://huggingface.co/PrunaAI/P-H3-Image-Comfy)** by PrunaAI ([#8](https://github.com/eduardoabreu81/minimax-h3-forge-neo/issues/8)) - the image-only derivative of H3, with its own text encoder and VAE. Select its files and H3 makes stills from text, or edits a picture with up to 8 more as references. It is recognized from the files you pick; H3 itself works exactly as before. A new **ph3** UI preset keeps its files and settings, so switching between H3 video (**h3**) and P-H3-Image stills (**ph3**) is one click. **Experimental:** checked on the CPU against the published files and against ComfyUI's code, not yet run on a GPU - please report how it goes in [#8](https://github.com/eduardoabreu81/minimax-h3-forge-neo/issues/8)
 
 ### v0.7.5 - Fixes
 
@@ -183,8 +183,8 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 ### 🖼️ P-H3-Image (Experimental)
 
 - PrunaAI's **image-only** version of H3: stills up to 8 megapixels, from text or edited from pictures
-- Select its checkpoint (or H3's FL2VA checkpoint with its LoRA), **its text encoder and its VAE** - no audio VAE. The extension notices and switches by itself
-- Set **Output** to **Still image**, the **Euler** sampler, **8 steps** and **CFG 1**; it always samples on its own schedule with both shifts at 1
+- Pick the **ph3** UI preset (Euler, 8 steps, CFG 1, 2048x2048), then its checkpoint (or H3's FL2VA checkpoint with its LoRA), **its text encoder and its VAE** - no audio VAE. Forge remembers the checkpoint and files of each preset, so from then on **h3** and **ph3** switch the files too
+- The extension recognizes P-H3-Image from the files and sets **Output** to **Still image** by itself; it always samples on its own schedule with both shifts at 1
 - **Editing** in img2img: the input image is `<Picture 1>`, the ImageStitch gallery the next ones. A short instruction ("put the hat from `<Picture 2>` on him") is sent as `Edit <Picture 1>. ...`, as in PrunaAI's workflow
 - PrunaAI's prompt upsampler (a 9B language model) is not included: write the detailed prompt yourself, or let another LLM expand it
 
@@ -288,7 +288,7 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 | Acc 8-Step LoRA, FL2VA | [MiniMax-H3-FL2VA-Acc-8Step_pruned_comfy](https://huggingface.co/Kijai/MiniMax-H3-experimental/blob/main/loras/MiniMax-H3-FL2VA-Acc-8Step_pruned_comfy.safetensors) (Kijai) | `models/Lora` |
 | Acc 8-Step LoRA, Ref2VA | [MiniMax-H3-Ref2VA-Acc-8Step_pruned_comfy](https://huggingface.co/Kijai/MiniMax-H3-experimental/blob/main/loras/MiniMax-H3-Ref2VA-Acc-8Step_pruned_comfy.safetensors) (Kijai) | `models/Lora` |
 
-**P-H3-Image (experimental), for still images only** - from [PrunaAI/P-H3-Image-Comfy](https://huggingface.co/PrunaAI/P-H3-Image-Comfy/tree/main). Select the checkpoint with **only** its text encoder and its VAE (no H3 text encoder, no audio VAE):
+**P-H3-Image (experimental), for still images only** - from [PrunaAI/P-H3-Image-Comfy](https://huggingface.co/PrunaAI/P-H3-Image-Comfy/tree/main). In the **ph3** UI preset, select the checkpoint with **only** its text encoder and its VAE (no H3 text encoder, no audio VAE):
 
 | Part | File | Size | Folder |
 | :--- | :--- | :--- | :--- |
@@ -317,7 +317,7 @@ Instead of its checkpoint, H3's own `minimax_h3_fl2va` checkpoint with PrunaAI's
 | **Turbo LoRA** at weight 1 | Res Multistep | Simple | 8, or 12 with speech | 1 | 6 |
 | **FastH3** checkpoint | Res Multistep | Simple | 8 | 1 | 10 |
 | **Acc 8-Step LoRA** at weight 1 | **Euler** | Simple | 8 | 1 | 12 |
-| **P-H3-Image** (Still image) | **Euler** | not used (its own) | 8 | 1 | not used (1) |
+| **P-H3-Image** (the ph3 preset) | **Euler** | not used (its own) | 8 | 1 | not used (1) |
 
 Start from the **h3** preset and change the steps and Shift by hand for a turbo LoRA or FastH3.
 
