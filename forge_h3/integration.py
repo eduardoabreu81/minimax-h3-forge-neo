@@ -275,7 +275,9 @@ def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_vi
     if ph3:
         # P-H3-Image makes stills from text, or edits <Picture 1> with the other pictures as references
         if not still:
-            raise H3Error("P-H3-Image makes still images only: set the H3 Output to Still image.")
+            # as the panel does: an API call that leaves the H3 arguments out sends the default Output, Video
+            print("[MiniMax H3] P-H3-Image makes still images only: rendering a Still image")
+            output, still = "Still image", True
         if any(ref_audios or ()) or any(ref_videos or ()) or any(ref_media or ()):
             raise H3Error("P-H3-Image takes pictures only: remove the reference audio and videos.")
         mode = "fl2va"

@@ -424,8 +424,10 @@ class PH3FlowTests(unittest.TestCase):
 
     def test_video_and_audio_inputs_are_refused(self):
         from test_flow import Txt2Img
-        with self.assertRaisesRegex(H3Error, "still images only"):
-            integration.before_process(Txt2Img(), "Video", True)
+        # Video (the default Output of an API call without the H3 arguments) renders a still, as the panel does
+        p = Txt2Img()
+        integration.before_process(p, "Video", True)
+        self.assertEqual((p.h3_request.output, p.h3_request.frames, p.h3_request.include_audio), ("Still image", 1, False))
         with self.assertRaisesRegex(H3Error, "pictures only"):
             integration.before_process(Txt2Img(), "Still image", True, ref_audios=("voice.wav",))
 
