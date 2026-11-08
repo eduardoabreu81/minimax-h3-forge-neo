@@ -18,10 +18,10 @@ from backend.state_dict import load_state_dict
 from huggingface_guess import detection, model_list
 from transformers.modeling_utils import no_init_weights
 
-from . import filebacked, gguf_vision, model, release, taeh3, vae
+from . import filebacked, gguf_vision, model, ph3, release, taeh3, vae
 from .engine import MiniMaxH3Engine
 from .islands import fp32_islands, restore_fp32
-from .text_encoder import Qwen3VL32B
+from .text_encoder import PH3ImageQwen3VL, Qwen3VL32B
 from .transformer import MiniMaxH3Model
 
 logger = logging.getLogger("forge_h3")
@@ -87,7 +87,12 @@ def _hook_replace_state_dict() -> None:
     def replace_state_dict(sd: dict, asd: dict, guess, path):
         if not isinstance(guess, model.MiniMaxH3):
             return original(sd, asd, guess, path)
-        if _is_h3_text_encoder(asd):
+        # P-H3-Image's text encoder and VAE first: its VAE also has every key H3's video VAE is recognized by
+        if ph3.is_text_encoder(asd):
+            _replace(sd, f"{guess.text_encoder_key_prefix[0]}{TE_PREFIX}", ph3.convert_text_encoder(asd))
+        elif ph3.is_vae(asd):
+            _replace(sd, f"{guess.vae_key_prefix[0]}video.", vae.convert_video_vae(asd))
+        elif _is_h3_text_encoder(asd):
             _replace(sd, f"{guess.text_encoder_key_prefix[0]}{TE_PREFIX}", asd)
         elif vae.is_video_vae(asd):
             _replace(sd, f"{guess.vae_key_prefix[0]}video.", vae.convert_video_vae(asd))
@@ -100,7 +105,26 @@ def _hook_replace_state_dict() -> None:
     loader.replace_state_dict = replace_state_dict
 
 
+def _load_ph3_vae(state_dict: dict) -> ph3.AutoencoderPH3Image:
+    # P-H3-Image: the picture VAE alone; its int8 file quantizes the decoder linears as Kijai's H3 video VAE does
+    if any(k.startswith("audio.") for k in state_dict):
+        raise ValueError("P-H3-Image has no audio VAE: deselect the H3 audio VAE under VAE / Text Encoder")
+    layers = vae.video_layers(state_dict)
+    with no_init_weights():
+        video = None
+        if vae.is_quantized(state_dict, "video."):
+            with using_forge_operations(device=memory_management.cpu, dtype=torch.float32, manual_cast_enabled=True,
+                                        extra_dtype={"mixed_ops": True, "TE": False}):
+                video = ph3.PH3ImageVAE(num_layers=layers)
+        with using_forge_operations(device=memory_management.cpu, dtype=torch.float32, extra_dtype="vae"):
+            pair = ph3.AutoencoderPH3Image(video_layers=layers, video=video)
+    load_state_dict(pair, state_dict, log_name="P-H3-Image VAE")
+    return pair
+
+
 def _load_vae(state_dict: dict) -> vae.AutoencoderMiniMaxH3:
+    if isinstance(state_dict, dict) and ph3.is_vae(state_dict, "video."):
+        return _load_ph3_vae(state_dict)
     if not isinstance(state_dict, dict) or not any(k.startswith("video.") for k in state_dict) \
             or not any(k.startswith("audio.") for k in state_dict):
         raise ValueError(vae.MISSING_VAE)
@@ -154,6 +178,13 @@ def _hook_components() -> None:
         if cls_name == "Qwen3VLModel":
             if not isinstance(state_dict, dict) or len(state_dict) <= 16:
                 raise ValueError(MISSING_TE)
+            if ph3.is_text_encoder(state_dict):
+                # P-H3-Image's Qwen3-VL 4B, built from its own config instead of H3's 32B one
+                storages = filebacked.file_storages(state_dict)
+                with _swapped(llama, "Qwen3VL", PH3ImageQwen3VL):
+                    text_encoder = original(guess, component_name, lib_name, cls_name, ph3.CONFIG_DIR, state_dict)
+                _file_backed("P-H3-Image text encoder", text_encoder, storages)
+                return text_encoder
             gguf = gguf_vision.is_gguf(state_dict)
             if gguf:
                 from backend.loader_gguf import dequantize

@@ -292,6 +292,10 @@ class ViT3DDecoder(nn.Module):
         self.norm_out = nn.LayerNorm(dim, elementwise_affine=True, eps=eps)
         self.proj_out = nn.Linear(dim, out_channels * patch_size_t * patch_size * patch_size)
 
+    def _token_ids(self, T, H, W, device, dtype):
+        # rope coordinates of the latent tokens; P-H3-Image's single-frame decoder fixes the time one (ph3.py)
+        return create_token_ids((T, H, W), device, dtype)
+
     def forward(self, x):
         B, _, latent_T, latent_H, latent_W = x.shape
         h = self.x_embedder(x.flatten(2).transpose(1, 2))  # [B, T*H*W, C]
@@ -300,7 +304,7 @@ class ViT3DDecoder(nn.Module):
         registers = kernels.cast_to(self.register_tokens, dtype=h.dtype, device=h.device).expand(B, -1, -1)
         h = torch.cat([h, registers, torch.zeros_like(h[:, 0:1, :])], dim=1)
 
-        img_ids = create_token_ids((latent_T, latent_H, latent_W), x.device, x.dtype).expand(B, -1, -1)
+        img_ids = self._token_ids(latent_T, latent_H, latent_W, x.device, x.dtype).expand(B, -1, -1)
         img_ids = torch.cat([img_ids, torch.zeros((B, num_suffix, 3), device=x.device, dtype=img_ids.dtype)], dim=1)
         rotary_pos_emb = self.pos_embed(img_ids)
 

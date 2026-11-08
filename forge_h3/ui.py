@@ -11,6 +11,7 @@ from .contracts import (
     FPS,
     MAX_REF_AUDIOS,
     MAX_REF_VIDEOS,
+    PH3_IMAGE,
     SOUNDTRACKS,
     H3Error,
 )
@@ -83,7 +84,8 @@ class Panel:
                             "one image to the **ImageStitch Integrated** gallery; both follow **Resize mode**. With a **Ref2VA** checkpoint the input "
                             "image is `<Picture 1>` and the gallery holds the next reference pictures, up to 9 in all. "
                             "**Still image** edits with any H3 checkpoint: the input image is `<Picture 1>` and the "
-                            "gallery holds the next pictures. Denoising strength is not used.")
+                            "gallery holds the next pictures. With the **P-H3-Image** text encoder and VAE, H3 makes "
+                            "Still images only, the same way. Denoising strength is not used.")
             else:
                 gr.Markdown("With an FL2VA checkpoint, one image in the **ImageStitch Integrated** gallery is the **last "
                             "frame** (img2img gives the first). With a **Ref2VA** checkpoint the gallery holds up to 9 "
@@ -262,6 +264,9 @@ class Panel:
                     ref2va = components.mode == "ref2va"
                     mode = ("**Mode:** Ref2VA, reference pictures" if components.mode == "ref2va"
                             else "**Mode:** FL2VA, first and last frame")
+                    if components.variant == PH3_IMAGE:
+                        ref2va = False
+                        mode = "**Mode:** P-H3-Image, still images from text or edited from pictures"
                     summary = "  \n".join([mode] + [f"**{ROLE_LABELS[m.role].title()}:** {html.escape(m.path.name)} ({m.quantization})"
                                                     for m in components.models])
                     error = ""

@@ -8,6 +8,8 @@ vision block per pair of frames sampled at 2 FPS, a kept soundtrack being the "<
 "<Audio j>: " for the audio clips. Every text segment is tokenized on its own, as ComfyUI does.
 """
 
+import re
+
 import torch
 from backend.args import dynamic_args
 from backend.text_processing import emphasis
@@ -16,6 +18,14 @@ from backend.text_processing._comfy import EMBEDDINGS, INF, SDClipModel, SDToken
 PAD = 151643
 VISION_START = 151652
 VISION_END = 151653
+# P-H3-Image: with pictures a short instruction edits <Picture 1>; one that names the picture to edit, or an edit brief
+# from its prompt upsampler, is encoded as it is (ComfyUI PH3ImageConditioning)
+PH3_EDIT = "Edit <Picture 1>. {}"
+PH3_EDIT_VERBATIM = re.compile(r"\s*(Edit <Picture \d+>|subject_definitions:)")
+
+
+def edit_prompt(text: str) -> str:
+    return text.strip() if PH3_EDIT_VERBATIM.match(text) else PH3_EDIT.format(text)
 
 
 class VisionSpanClipModel(SDClipModel):
@@ -106,3 +116,13 @@ class MiniMaxH3TextEngine:
             add_text(f"<Audio {sounds}>: ")
         add_text(text)
         return [entries or [(PAD, 1.0)]]
+
+
+class PH3ImageTextEngine(MiniMaxH3TextEngine):
+    """P-H3-Image: the same presentation, and with pictures the prompt edits <Picture 1> (ComfyUI PH3ImageConditioning);
+    its text encoder returns the text connector's conditioning as the last-layer output."""
+
+    def tokens(self, text: str, images=(), audios: int = 0, videos=()) -> list[list[tuple]]:
+        if images:
+            text = edit_prompt(text)
+        return super().tokens(text, images, audios, videos)

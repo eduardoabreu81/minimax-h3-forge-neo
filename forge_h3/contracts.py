@@ -17,6 +17,13 @@ MIN_AUDIO_SHIFT = 0.01
 MAX_AUDIO_SHIFT = 100.0
 # FL2VA (text, first and last frame) and Ref2VA (reference pictures) checkpoints
 MODES = ("fl2va", "ref2va")
+# MiniMax H3, and PrunaAI's P-H3-Image: an image-only derivative with the same DiT (or H3's with its LoRA), a Qwen3-VL 4B
+# text encoder and a single-frame VAE; it makes still images, from text or edited from pictures
+H3 = "h3"
+PH3_IMAGE = "p-h3-image"
+VARIANTS = (H3, PH3_IMAGE)
+# P-H3-Image samples with both flow shifts at 1
+PH3_SHIFT = 1.0
 MAX_REFERENCES = 9
 # Ref2VA reference audio (MiniMax-H3 README): up to 3 clips, each 2-15 seconds, 15 seconds in all
 MAX_REF_AUDIOS = 3
@@ -90,10 +97,15 @@ class GenerationRequest:
     guide_frame: int | None = None
     # a Fun ControlNet with a control video and/or an inpainting mask (control.py)
     control: bool = False
+    variant: str = H3
 
     def __post_init__(self):
         if self.output not in ("Video", "Still image"):
             raise H3Error("H3 output must be Video or Still image.")
+        if self.variant not in VARIANTS:
+            raise H3Error(f"Unknown H3 variant {self.variant!r}.")
+        if self.variant == PH3_IMAGE:
+            self._check_ph3_image()
         if self.mode not in MODES:
             raise H3Error(f"Unknown H3 mode {self.mode!r}.")
         if self.mode == "ref2va" and self.keyframes:
@@ -141,6 +153,17 @@ class GenerationRequest:
             if not 0 <= self.guide_index < self.frames:
                 raise H3Error(f"H3 Guide frame {self.guide_frame} is outside the clip's {self.frames} frames "
                               f"(0 to {self.frames - 1}, or -1 to -{self.frames} from the end).")
+
+    def _check_ph3_image(self):
+        if self.output != "Still image":
+            raise H3Error("P-H3-Image makes still images only: set the H3 Output to Still image.")
+        if self.reference_audios or self.reference_videos:
+            raise H3Error("P-H3-Image takes pictures only: remove the reference audio and videos.")
+        if self.guide_frame is not None:
+            raise H3Error("P-H3-Image takes no H3 Guide: clear the guide video and audio.")
+        if self.control:
+            raise H3Error("P-H3-Image takes no Fun ControlNet: clear the H3 Control inputs.")
+        self.audio_shift = PH3_SHIFT
 
     @property
     def guide_index(self):

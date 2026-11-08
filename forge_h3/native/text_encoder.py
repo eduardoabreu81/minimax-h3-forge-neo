@@ -17,6 +17,7 @@ from backend.nn.llm import llama, qwen35
 from backend.nn.llm.llama import Llama2_, Qwen3VL, Qwen3VL_4BConfig
 from backend.nn.llm.qwen35 import Qwen3VLVisionModel
 
+from . import ph3
 from .layout import vision_size
 
 VISION_KEYS = ("hidden_size", "intermediate_size", "depth", "num_heads", "num_position_embeddings", "deepstack_visual_indexes")
@@ -149,3 +150,58 @@ class Qwen3VL32B(Qwen3VL):
             if intermediate is not None and final_layer_norm_intermediate:
                 intermediate = model.norm(intermediate)
         return x, intermediate
+
+
+class PH3ImageQwen3VL(Qwen3VL32B):
+    """P-H3-Image's conditioning encoder: the whole Qwen3-VL 4B (Forge Neo's own size, with its final norm) and the
+    text connector over its hidden states 13, 19, 25, 31 and 36 (ComfyUI PH3ImageQwen3VL). It returns the connector's
+    5120-wide conditioning as the last-layer output, so Forge's text processing takes it with layer="last"; images run
+    the same interleaved M-RoPE and DeepStack path as H3's 32B encoder."""
+
+    def __init__(self, config_dict: dict, **kwargs):
+        nn.Module.__init__(self)
+        text_config: dict = config_dict.get("text_config", {})
+        if text_config.get("hidden_size", None) != Qwen3VL_4BConfig.hidden_size:
+            raise ValueError("[MiniMax H3] the P-H3-Image text encoder config is not Qwen3-VL 4B")
+        config = Qwen3VL_4BConfig()
+
+        for key, value in asdict(config).items():
+            if key in config_dict:
+                assert value == config_dict[key]
+
+        self.num_layers = config.num_hidden_layers
+        self.model = Llama2_(config)
+
+        vision_config = {**vision_defaults(), "out_hidden_size": config.hidden_size}
+        for key in VISION_KEYS:
+            if key in config_dict.get("vision_config", {}):
+                vision_config[key] = config_dict["vision_config"][key]
+        self.visual = Qwen3VLVisionModel(vision_config)
+        self.text_connector = ph3.TextConnector(len(ph3.HIDDEN_STATES) * config.hidden_size, ph3.TEXT_DIM)
+
+    def forward(self, x, attention_mask=None, embeds=None, num_tokens=None, intermediate_output=None, final_layer_norm_intermediate=True, dtype=None, embeds_info=[]):
+        model = self.model
+        if embeds is not None:
+            h = embeds
+        else:
+            # Forge's text processing always passes the embeddings; token ids alone take the plain lookup
+            h = model.embed_tokens(x)
+            h = h.to(dtype) if dtype is not None else h
+        position_ids, visual_mask, deepstack = (None, None, None) if embeds is None else self.build_image_inputs(embeds, embeds_info)
+        if position_ids is None:
+            # text only: the three M-RoPE axes coincide
+            position_ids = torch.arange(h.shape[1], device=h.device).unsqueeze(0).expand(3, -1)
+            visual_mask, deepstack = None, []
+        else:
+            visual_mask = visual_mask[0]
+        freqs_cis = interleaved_mrope(model.config, position_ids, h.device)
+        mask = _attention_mask(attention_mask, h)
+
+        def step(i, layer, state):
+            state, _ = layer(x=state, attention_mask=mask, freqs_cis=freqs_cis, optimized_attention=llama.attention_function, past_key_value=None)
+            if i < len(deepstack):
+                state[:, visual_mask] = state[:, visual_mask] + deepstack[i].to(device=state.device, dtype=state.dtype)
+            return state
+
+        hidden, _ = ph3.hidden_states(h, model.layers, model.norm, step)
+        return self.text_connector(hidden), None

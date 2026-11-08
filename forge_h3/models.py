@@ -6,11 +6,16 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-from .contracts import H3Error
+from .contracts import H3, PH3_IMAGE, H3Error
 
 MAX_HEADER_BYTES = 32 * 1024 * 1024
 ROLE_LABELS = {"dit": "diffusion model", "text_encoder": "text encoder",
-               "video_vae": "video VAE", "audio_vae": "audio VAE"}
+               "video_vae": "video VAE", "audio_vae": "audio VAE",
+               "ph3_text_encoder": "P-H3-Image text encoder", "ph3_vae": "P-H3-Image VAE"}
+
+# MiniMax H3 itself, and PrunaAI's P-H3-Image (contracts.VARIANTS): the DiT files cannot tell them apart, so the selected
+# text encoder and VAE decide. The P-H3-Image VAE decodes one frame per latent: 3 channels x 1 x 16 x 16 outputs per token, where H3's has 4 frames
+PH3_DECODER_OUT = 3 * 16 * 16
 
 
 def _unique_pairs(pairs):
@@ -164,6 +169,18 @@ def _role(keys):
     return None
 
 
+def _ph3_role(header, keys):
+    """The P-H3-Image text encoder (Qwen3-VL 4B with its text connector) or VAE (H3's encoder, single-frame decoder);
+    checked before _role, which would take the VAE for H3's video VAE."""
+    if "text_connector.proj.weight" in keys and any(k.endswith("embed_tokens.weight") for k in keys):
+        return "ph3_text_encoder"
+    proj = header.get("decoder.proj_out.weight")
+    if (isinstance(proj, dict) and proj["shape"][:1] == [PH3_DECODER_OUT]
+            and any(k.startswith("decoder.register_tokens") for k in keys)):
+        return "ph3_vae"
+    return None
+
+
 # ComfyUI quantization formats as the files name them, and the short label the Components panel shows
 QUANT_LABELS = {"int8_tensorwise": "int8", "asym_w4a8_int8": "w4a8", "w6a8_int8": "w6a8", "convrot_w4a4": "int4",
                 "float8_e4m3fn": "fp8", "float8_e5m2": "fp8", "mxfp8": "mxfp8", "nvfp4": "nvfp4"}
@@ -243,7 +260,7 @@ def inspect_model(path):
         return None
     header = read_header(path)
     keys = set(header) - {"__metadata__"}
-    role = _role(keys)
+    role = _ph3_role(header, keys) or _role(keys)
     if role is None:
         if suffix == ".gguf" and any(k.startswith("blk.") for k in keys):
             # llama.cpp keeps Qwen3-VL's vision tower in a separate mmproj file; unsloth's H3 file carries it inside
@@ -267,11 +284,13 @@ class Components:
     dit: ModelInfo
     text_encoder: ModelInfo
     video_vae: ModelInfo
-    audio_vae: ModelInfo
+    # None for P-H3-Image, which has no audio VAE
+    audio_vae: ModelInfo | None
+    variant: str = H3
 
     @property
     def models(self):
-        return (self.dit, self.text_encoder, self.video_vae, self.audio_vae)
+        return tuple(m for m in (self.dit, self.text_encoder, self.video_vae, self.audio_vae) if m is not None)
 
     @property
     def mode(self):
@@ -292,6 +311,8 @@ def resolve_components(dit_path, module_paths):
         if item.role in resolved:
             raise H3Error(f"More than one H3 {ROLE_LABELS[item.role]} is selected.")
         resolved[item.role] = item
+    if any(role.startswith("ph3_") for role in resolved):
+        return _ph3_components(resolved)
     if "text_encoder" in resolved and resolved["text_encoder"].quantization == "nvfp4":
         # Forge Neo loads it without a warning, but the conditioning comes out wrong (a prompt for a bird gave a dog)
         raise H3Error("The NVFP4 AWQ text encoder does not encode prompts correctly in Forge Neo yet. Select qwen3vl_32b_minimax_h3_int8_convrot or the bf16 text encoder.")
@@ -299,3 +320,17 @@ def resolve_components(dit_path, module_paths):
         if role not in resolved:
             raise H3Error(f"Select the H3 {ROLE_LABELS[role]} in Forge's VAE / Text Encoder field.")
     return Components(**resolved)
+
+
+def _ph3_components(resolved):
+    """P-H3-Image: its own text encoder and VAE, no audio VAE, and none of H3's components."""
+    mixed = [ROLE_LABELS[role] for role in ("text_encoder", "video_vae", "audio_vae") if role in resolved]
+    if mixed:
+        raise H3Error(f"P-H3-Image and MiniMax H3 components are mixed: deselect the H3 {' and the H3 '.join(mixed)}. "
+                      "P-H3-Image uses its own text encoder and VAE, and no audio VAE.")
+    for role in ("ph3_text_encoder", "ph3_vae"):
+        if role not in resolved:
+            raise H3Error(f"Select the {ROLE_LABELS[role]} in Forge's VAE / Text Encoder field: P-H3-Image needs its own "
+                          "text encoder and VAE.")
+    return Components(dit=resolved["dit"], text_encoder=resolved["ph3_text_encoder"], video_vae=resolved["ph3_vae"],
+                      audio_vae=None, variant=PH3_IMAGE)
