@@ -1,6 +1,6 @@
 # Installation and troubleshooting
 
-Version 0.7.5. MiniMax H3 runs on Forge Neo's own loader, samplers and memory management; the only Python package the extension may install is `imageio-ffmpeg`, when the machine has no FFmpeg. See the [README](../README.md) for the short version, [Performance and Memory](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Performance-and-Memory) for the measured times and the [wiki](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki) for the detailed guides.
+Version 0.8.0. MiniMax H3 runs on Forge Neo's own loader, samplers and memory management; the only Python package the extension may install is `imageio-ffmpeg`, when the machine has no FFmpeg. See the [README](../README.md) for the short version, [Performance and Memory](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Performance-and-Memory) for the measured times and the [wiki](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki) for the detailed guides.
 
 ## Requirements
 
@@ -78,6 +78,17 @@ Outside the h3 preset, the Shift slider belongs to the other preset (for example
 
 Checked on the A40: first, last, both, CFG 3, a turbo LoRA and Never OOM. Use 768 on the short side for clean results; see the wiki's [First and Last Frame](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/First-and-Last-Frame) page.
 
+## P-H3-Image (experimental)
+
+PrunaAI's P-H3-Image is an image-only derivative of H3: the same DiT, a Qwen3-VL 4B text encoder with a small text connector, and a VAE with H3's encoder and a decoder that makes one frame per latent. There is no audio VAE.
+
+- **Files:** `p-h3-image_*` from [PrunaAI/P-H3-Image-Comfy](https://huggingface.co/PrunaAI/P-H3-Image-Comfy/tree/main): a checkpoint (bf16, int8_convrot or w4a8), a text encoder (same three) and a VAE (bf16 or int8_convrot). H3's own FL2VA checkpoint with `p-h3-image_lora_bf16` replaces the checkpoint.
+- **Recognition:** the extension tells P-H3-Image from H3 by the text encoder and VAE selected under **VAE / Text Encoder** (the checkpoints cannot be told apart). Mixing them, or adding the H3 audio VAE, is refused with a message saying what to deselect. The Components section shows **Mode: P-H3-Image**.
+- **Output:** Still image only, from text or edited from pictures (img2img input image as `<Picture 1>`, ImageStitch gallery for the next ones, 9 in all). With pictures, an instruction that does not start with `Edit <Picture` gets `Edit <Picture 1>. ` in front. Guide, Fun ControlNet, reference audio and videos are refused.
+- **Sampling:** the checkpoint's own sigma grid (`1.0 ... 0.528718, 0.0`, read off the same curve for another step count), whatever the Schedule type; both flow shifts are 1, whatever the Shift slider and Audio shift. Use Euler, 8 steps, CFG 1. The infotext says `H3 Variant: P-H3-Image`.
+- **Not included:** the prompt upsampler (Qwen3.5-9B). The int8 and w4a8 text encoders store the token embedding as ConvRot INT8; it is turned back into a plain bf16 table at load (about 0.8 GB).
+- **Status:** checked on the CPU only - the recognition against the headers of all eight published files, the text encoder and VAE layouts against them (the text encoder also built with Forge Neo's own Qwen3-VL code), the text connector, the embedding and the single-frame VAE against ComfyUI's code, and a still through Forge's order with toy models. Not yet run with the real models on a GPU.
+
 ## Troubleshooting
 
 | Symptom | What to do |
@@ -85,6 +96,8 @@ Checked on the A40: first, last, both, CFG 3, a turbo LoRA and Never OOM. Use 76
 | The MiniMax H3 panel does not appear | Select an H3 checkpoint; the panel shows only for H3. If the console says `H3 native controls were not found`, update Forge Neo and restart. |
 | `Select the H3 text encoder / video VAE / audio VAE...` | Select all three components under **VAE / Text Encoder**, and only one of each. |
 | `Unrecognized H3 component` | A selected module is not an H3 file. Deselect it. |
+| `P-H3-Image and MiniMax H3 components are mixed` | Select either the P-H3-Image text encoder and VAE, or H3's text encoder, video VAE and audio VAE. |
+| `P-H3-Image makes still images only` | Set the H3 **Output** to **Still image**. |
 | `H3 width and height must be multiples of 32` / `H3 Frames must follow 17n + 5` | Use multiples of 32 for the size; the Frames slider moves in steps of 17 from 5 to 362. |
 | `The img2img input image did not reach H3` | Set **Settings → VAE → VAE for Encoding** to **Full** and check the console for an earlier error. |
 | The process is killed while loading H3 or adding a LoRA | Not enough system RAM. Close other programs, restart Forge before changing the text encoder, and for long clips with a LoRA set **Diffusion in Low Bits** to **Automatic (fp16 LoRA)**. |
@@ -100,10 +113,11 @@ python -m unittest discover -s tests -v
 python -m ruff check .
 ```
 
-The native backend tests need Torch and comfy-kitchen; Gradio is optional. They use the real tensor names and shapes of nine published files (`tests/fixtures/h3_headers.json.gz`, no weights) and stand-ins for Forge Neo (`tests/forge_stubs.py`). They do not replace a GPU run.
+The native backend tests need Torch and comfy-kitchen; Gradio is optional. They use the real tensor names and shapes of nine published H3 files and eight P-H3-Image files (`tests/fixtures/h3_headers.json.gz`, `tests/fixtures/ph3_headers.json.gz`, no weights) and stand-ins for Forge Neo (`tests/forge_stubs.py`). They do not replace a GPU run.
 
 ## Source provenance
 
 - ComfyUI `e9027f2`: `comfy/ldm/minimax/`, `comfy/text_encoders/minimax.py`, `comfy/model_base.py` (`MiniMaxH3`), `comfy_extras/nodes_minimax_h3.py`.
+- ComfyUI `0decb39` for P-H3-Image: `comfy/text_encoders/minimax.py` (`PH3ImageQwen3VL`, `TextConnector`), `comfy/ldm/minimax/vae.py` (`PH3ImageVAE`), `comfy/sd.py`, `comfy_extras/nodes_minimax_h3.py` (`PH3ImageConditioning`).
 - Forge Neo `97b26fb` (GPU tests) and `d70373e` (source reading).
-- Comfy-Org/MiniMax-H3 `e5eb578` and MiniMaxAI/MiniMax-H3 `42ed227` for the model files.
+- Comfy-Org/MiniMax-H3 `e5eb578` and MiniMaxAI/MiniMax-H3 `42ed227` for the model files; PrunaAI/P-H3-Image and P-H3-Image-Comfy (configs, workflows and file headers, read on 8 November 2026) for P-H3-Image.

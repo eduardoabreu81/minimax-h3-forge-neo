@@ -3,7 +3,7 @@
 <div align="center">
 
 [![Forge Neo](https://img.shields.io/badge/Forge-Neo-blue)](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)
-[![Version](https://img.shields.io/badge/Version-0.7.4-brightgreen)](https://github.com/eduardoabreu81/minimax-h3-forge-neo)
+[![Version](https://img.shields.io/badge/Version-0.8.0-brightgreen)](https://github.com/eduardoabreu81/minimax-h3-forge-neo)
 ![Status](https://img.shields.io/badge/Status-Work_in_progress-orange)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-green)](LICENSE)
 
@@ -41,6 +41,11 @@ Generate **videos with sound** with **[MiniMax H3](https://github.com/MiniMax-AI
 ---
 
 ## 🆕 What's New
+
+### v0.8.0 - Still Images and P-H3-Image
+
+- **Still image renders a true single frame** - instead of the first frame of a 5-frame clip, so the same seed gives a different picture than before. In img2img it edits: the input image is `<Picture 1>` and the **ImageStitch Integrated** gallery holds the next pictures, with any H3 checkpoint
+- **[P-H3-Image](https://huggingface.co/PrunaAI/P-H3-Image-Comfy)** by PrunaAI ([#8](https://github.com/eduardoabreu81/minimax-h3-forge-neo/issues/8)) - the image-only derivative of H3, with its own text encoder and VAE. Select its files and H3 makes stills from text, or edits a picture with up to 8 more as references. It is recognized from the files you pick; H3 itself works exactly as before. **Experimental:** checked on the CPU against the published files and against ComfyUI's code, not yet run on a GPU - please report how it goes in [#8](https://github.com/eduardoabreu81/minimax-h3-forge-neo/issues/8)
 
 ### v0.7.5 - Fixes
 
@@ -175,6 +180,14 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 - **Include generated audio** checkbox for a silent video
 - **Still image** output: a true single frame, in txt2img or edited from an input image and reference pictures, with the method from [Fizgig H3 Still](https://github.com/shootthesound/ComfyUI-Fizgig-H3-Still) by Peter Neill (MIT)
 
+### 🖼️ P-H3-Image (Experimental)
+
+- PrunaAI's **image-only** version of H3: stills up to 8 megapixels, from text or edited from pictures
+- Select its checkpoint (or H3's FL2VA checkpoint with its LoRA), **its text encoder and its VAE** - no audio VAE. The extension notices and switches by itself
+- Set **Output** to **Still image**, the **Euler** sampler, **8 steps** and **CFG 1**; it always samples on its own schedule with both shifts at 1
+- **Editing** in img2img: the input image is `<Picture 1>`, the ImageStitch gallery the next ones. A short instruction ("put the hat from `<Picture 2>` on him") is sent as `Edit <Picture 1>. ...`, as in PrunaAI's workflow
+- PrunaAI's prompt upsampler (a 9B language model) is not included: write the detailed prompt yourself, or let another LLM expand it
+
 ### 🖼️ First and Last Frame
 
 - **img2img** - your input image becomes the first frame of the video
@@ -275,6 +288,16 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 | Acc 8-Step LoRA, FL2VA | [MiniMax-H3-FL2VA-Acc-8Step_pruned_comfy](https://huggingface.co/Kijai/MiniMax-H3-experimental/blob/main/loras/MiniMax-H3-FL2VA-Acc-8Step_pruned_comfy.safetensors) (Kijai) | `models/Lora` |
 | Acc 8-Step LoRA, Ref2VA | [MiniMax-H3-Ref2VA-Acc-8Step_pruned_comfy](https://huggingface.co/Kijai/MiniMax-H3-experimental/blob/main/loras/MiniMax-H3-Ref2VA-Acc-8Step_pruned_comfy.safetensors) (Kijai) | `models/Lora` |
 
+**P-H3-Image (experimental), for still images only** - from [PrunaAI/P-H3-Image-Comfy](https://huggingface.co/PrunaAI/P-H3-Image-Comfy/tree/main). Select the checkpoint with **only** its text encoder and its VAE (no H3 text encoder, no audio VAE):
+
+| Part | File | Size | Folder |
+| :--- | :--- | :--- | :--- |
+| Checkpoint | [p-h3-image_int8_convrot](https://huggingface.co/PrunaAI/P-H3-Image-Comfy/blob/main/diffusion_models/p-h3-image_int8_convrot.safetensors), or `_w4a8` (13.4 GB) | 21.2 GB | `models/Stable-diffusion` |
+| Text encoder | [p-h3-image_text_encoder_int8_convrot](https://huggingface.co/PrunaAI/P-H3-Image-Comfy/blob/main/text_encoders/p-h3-image_text_encoder_int8_convrot.safetensors), or `_bf16` | 5.1 GB | `models/text_encoder` |
+| VAE | [p-h3-image_vae_bf16](https://huggingface.co/PrunaAI/P-H3-Image-Comfy/blob/main/vae/p-h3-image_vae_bf16.safetensors), or `_int8_convrot` | 5.6 GB | `models/VAE` |
+
+Instead of its checkpoint, H3's own `minimax_h3_fl2va` checkpoint with PrunaAI's [p-h3-image_lora_bf16](https://huggingface.co/PrunaAI/P-H3-Image-Comfy/blob/main/loras/p-h3-image_lora_bf16.safetensors) at weight 1 should work too. P-H3-Image has its own license terms - read its model card before using it.
+
 6. **FFmpeg** writes the videos: if your machine has none, the extension installs it by itself when Forge starts. To use your own, keep it on the `PATH` or set its path in **Settings** → **MiniMax H3**
 7. Pick the **h3** UI preset, the checkpoint, and **all three** of the text encoder, the video VAE and the audio VAE under **VAE / Text Encoder**
 
@@ -294,6 +317,7 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 | **Turbo LoRA** at weight 1 | Res Multistep | Simple | 8, or 12 with speech | 1 | 6 |
 | **FastH3** checkpoint | Res Multistep | Simple | 8 | 1 | 10 |
 | **Acc 8-Step LoRA** at weight 1 | **Euler** | Simple | 8 | 1 | 12 |
+| **P-H3-Image** (Still image) | **Euler** | not used (its own) | 8 | 1 | not used (1) |
 
 Start from the **h3** preset and change the steps and Shift by hand for a turbo LoRA or FastH3.
 
@@ -317,6 +341,8 @@ More about both on the wiki: [16 GB Cards](https://github.com/eduardoabreu81/min
 With the default range, a person or object turning on itself may "morph" instead of rotating; starting at 0.50 keeps the motion of the regular result. With FastH3 the same switch turns on its own sparse attention.
 
 **Spectrum Integrated** - another 21-25%: turn it on and **keep its default settings**, with CFG 1 as the h3 preset sets. A bigger Cache Window skips more steps and changes the scene ([what it looks like](https://github.com/eduardoabreu81/minimax-h3-forge-neo/wiki/Bloopers#spectrum-with-a-bigger-cache-window)).
+
+**P-H3-Image** works best at **8 megapixels** (2912x2912, 3360x2496, 3872x2176...) and at 4 megapixels for edits (2048x2048, 2368x1760, 2720x1536...); PrunaAI's ComfyUI files peak at about 56 GB with the bf16 set and 21 GB with the w4a8 one.
 
 **Width and Height** must be multiples of 32. The model looks best at **768 on the short side** - 1152x768, 768x1152, 1024x576 or 576x1024. Use at least 544 with a turbo LoRA.
 
@@ -367,6 +393,7 @@ With the default range, a person or object turning on itself may "morph" instead
 - **[Forge Neo](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)** by Haoming02
 - **[MiniMax H3](https://github.com/MiniMax-AI/MiniMax-H3)** by MiniMax
 - **[ComfyUI](https://github.com/Comfy-Org/ComfyUI)** - reference implementation of the model
+- **[PrunaAI](https://huggingface.co/PrunaAI/P-H3-Image-Comfy)** - P-H3-Image and its ComfyUI files; the port follows ComfyUI's native P-H3-Image support
 - **[Comfy-Org](https://huggingface.co/Comfy-Org/MiniMax-H3)** - the model files and the turbo LoRAs
 - **[FastVideo](https://huggingface.co/FastVideo/FastVideo-FastH3-8-Step-V2)** - FastH3
 - **[Kijai](https://huggingface.co/Kijai)** - the INT8 video VAE and the W4A8 checkpoints
