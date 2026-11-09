@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 
 from ..contracts import raise_pending_error
-from . import fun_control, kernels, lora
+from . import fun_control, half, kernels, lora
 from .dit import (
     SEGMENT_TAG,
     DiTBlock,
@@ -124,9 +124,10 @@ class MiniMaxH3Model(nn.Module):
         merged[update] = target_rows
         return merged
 
-    def _embed_and_pack(self, video_x, audio_x, context, layout, payload):
+    def _embed_and_pack(self, video_x, audio_x, context, layout, payload, guard=None):
         device = video_x.device
-        dtype = context.dtype
+        # float16 compute keeps the residual stream in float32 (half.py)
+        dtype = torch.float32 if guard is not None else context.dtype
         seed = int(payload.get("seed", 0))
         cond_video = self._cond_rows(payload.get("cond_video_latents", []), lambda z: patchify_video(z, self.patch_size),
                                      payload.get("visual_cond_noise_aug", VISUAL_COND_TIMESTEP), seed, device)
@@ -141,7 +142,10 @@ class MiniMaxH3Model(nn.Module):
         audio_embed = self.audio_patch_proj(all_audio_rows).to(dtype)
         text_states = context[0]
         if text_states.shape[-1] != self.hidden_size:
-            text_states = self.token_refiner(self.condition_proj(text_states))
+            if guard is not None:
+                text_states = self.token_refiner(half.linear(self.condition_proj, text_states, half.ATTN_SCALE), guard)
+            else:
+                text_states = self.token_refiner(self.condition_proj(text_states))
 
         # segments are contiguous: assemble by slices, embed rows follow segment order
         h = torch.empty(layout.seq_len, self.hidden_size, dtype=dtype, device=device)
@@ -290,8 +294,28 @@ class MiniMaxH3Model(nn.Module):
         i0 = pos.floor().long().clamp(max=table.shape[0] - 2)   # keeps t=1.0 on the last interval
         return torch.lerp(table[i0], table[i0 + 1], (pos - i0).unsqueeze(1))
 
-    def _forward(self, x, timestep, context, transformer_options={}, minimax_payload=None,
-                 denoise_mask=None, audio_denoise_mask=None):
+    def _forward(self, x, timestep, context, transformer_options={}, **kwargs):
+        if context.dtype != torch.float16:
+            return self._forward_once(x, timestep, context, transformer_options, **kwargs)
+        # float16 forced on H3 (--fp16-unet, or an extension such as Turing FP16): fixed scales (half.py), checked
+        # once per step
+        guard = half.Guard()
+        try:
+            out = self._forward_once(x, timestep, context, transformer_options, guard=guard, **kwargs)
+            if guard.overflowed():
+                print("[MiniMax H3] float16 overflowed in this step: computing it again with wider scales")
+                guard = half.Guard(wide=True)
+                out = self._forward_once(x, timestep, context, transformer_options, guard=guard, **kwargs)
+                if guard.overflowed():
+                    raise RuntimeError("[MiniMax H3] this step overflows float16 even with the wider scales; let Forge "
+                                       "Neo compute H3 in float32: drop --fp16-unet, or turn off the extension that "
+                                       "switches it to float16")
+        finally:
+            transformer_options.pop(half.OPTION, None)
+        return out
+
+    def _forward_once(self, x, timestep, context, transformer_options={}, minimax_payload=None,
+                      denoise_mask=None, audio_denoise_mask=None, guard=None):
         video_x, audio_x = x[0], x[1]
         orig_t, orig_h, orig_w = video_x.shape[2], video_x.shape[3], video_x.shape[4]
         video_x = pad_to_patch_size(video_x, self.patch_size)
@@ -332,7 +356,9 @@ class MiniMaxH3Model(nn.Module):
         mod_segments = self._mod_segments(layout, seg_t, t_row, payload.get("text_token_tags"),
                                           video_rows_t, audio_rows_t, rows_to_mod_index)
 
-        h = self._embed_and_pack(video_x, audio_x, context, layout, payload)
+        h = self._embed_and_pack(video_x, audio_x, context, layout, payload, guard)
+        if guard is not None:
+            transformer_options[half.OPTION] = guard
         t_emb = self._time_embedding(torch.tensor(unique_t, dtype=torch.float32, device=device), dtype)
         # rotation table computed once per forward, consumed by the kitchen split-half rope
         rope_freqs = rope_rotation_table(self.rope_freqs(layout.position_ids, device), dtype)
@@ -354,6 +380,8 @@ class MiniMaxH3Model(nn.Module):
         audio_row = rows_to_mod_index(audio_rows_t, 0) // 3 if audio_rows_t is not None else t_row[seg_t["audio"]]
         v, a = self.final_layer(h, t_emb, (va, vb, video_row), (aa, ab, audio_row), sigma_v,
                                 transformer_options.get("sample_sigmas"), (shift_v, shift_a))
+        if guard is not None:
+            guard.watch(v, a)
 
         video_out = unpatchify_video(v, latent_t, lat_h // 2, lat_w // 2, self.latents_dim, self.patch_size)
         video_out = video_out[:, :, :orig_t, :orig_h, :orig_w]

@@ -176,9 +176,10 @@ class ControlRun:
 def apply_controls(runs, blocks, h, t_emb, mod_segments, rope_freqs, transformer_options, layout):
     """The DiT block loop with each active control stream next to it (ComfyUI before_block / after_block). Several
     runs add their skips into the same blocks, as chained ComfyUI control patches do; each keeps its own stream."""
-    # the control blocks run dense: the H3 sparse path keeps statistics per DiT block
+    # the control blocks run dense: the H3 sparse path keeps statistics per DiT block; and in the ControlNet's own
+    # dtype, which never is float16 (its float32 stream needs no half.py guard)
     control_options = sparse.dense_options({k: v for k, v in transformer_options.items()
-                                            if k != "minimax_h3_sparse"})
+                                            if k not in ("minimax_h3_sparse", "minimax_h3_half")})
     streams = [None] * len(runs)
     starts = {run.model.injection_layers[0] for run in runs}
     audio_pos = layout.audio_pos.to(h.device)

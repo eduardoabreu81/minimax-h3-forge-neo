@@ -14,7 +14,7 @@ import math
 import torch
 import torch.nn as nn
 
-from . import kernels, sparse
+from . import half, kernels, sparse
 from .layout import time_shift_sigma
 
 # modality tags of the adaLN rows: each timestep has three rows (video, text, audio)
@@ -75,8 +75,8 @@ class Attention(nn.Module):
             # fused per-head RMSNorm + partial split-half rope, in place on the qkv buffer
             q = q.view(1, s, self.heads, self.head_dim)
             k = k.view(1, s, self.heads, self.head_dim)
-            qw = kernels.cast_to(self.q_norm.weight, device=x.device)
-            kw = kernels.cast_to(self.k_norm.weight, device=x.device)
+            qw = kernels.cast_to(self.q_norm.weight, dtype=q.dtype, device=x.device)
+            kw = kernels.cast_to(self.k_norm.weight, dtype=k.dtype, device=x.device)
             rot = rope_freqs.shape[-3] * 2
             kernels.ck.rms_rope_split_half_(q, k, rope_freqs, qw, kw, epsilon=self.q_norm.eps, rot_dim=rot)
             q = q[0]
@@ -144,7 +144,11 @@ class RefinerBlock(nn.Module):
         self.attn = Attention(hidden, heads, head_dim, qk_eps, dtype=dtype, device=device)
         self.mlp = MLP(hidden, ffn, dtype=dtype, device=device)
 
-    def forward(self, x):
+    def forward(self, x, guard=None):
+        if guard is not None:
+            # float16 on a float32 stream (half.py)
+            x = half.attention(self.attn, half.rms_norm(self.norm1, x), None, None, guard).add_(x)
+            return half.mlp(self.mlp, half.rms_norm(self.norm2, x), guard).add_(x)
         # attn/mlp outputs are fresh: accumulate residuals in place
         x = self.attn(self.norm1(x)).add_(x)
         return self.mlp(self.norm2(x)).add_(x)
@@ -157,10 +161,10 @@ class TokenRefiner(nn.Module):
                                      for _ in range(num_layers)])
         self.final_norm = nn.RMSNorm(hidden, eps=final_eps, dtype=dtype, device=device)
 
-    def forward(self, x):
+    def forward(self, x, guard=None):
         for block in self.blocks:
-            x = block(x)
-        return self.final_norm(x)
+            x = block(x, guard)
+        return half.rms_norm(self.final_norm, x)
 
 
 class DiTBlock(nn.Module):
@@ -175,12 +179,23 @@ class DiTBlock(nn.Module):
                                     dtype=adaln_dtype if adaln_dtype is not None else dtype, device=device)
 
     def forward(self, x, t_emb, mod_segments, rope_freqs, transformer_options=None):
+        guard = (transformer_options or {}).get(half.OPTION)
+        if guard is not None:
+            return self._forward_half(x, t_emb, mod_segments, rope_freqs, transformer_options, guard)
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaln_proj(t_emb)
         h = _mod_scale_shift(self.norm1(x), shift_msa, scale_msa, mod_segments)
         attn = self.attn(h, rope_freqs=rope_freqs, transformer_options=transformer_options)
         x = _mod_gate(x, gate_msa, attn, mod_segments)
         h = _mod_scale_shift(self.norm2(x), shift_mlp, scale_mlp, mod_segments)
         return _mod_gate(x, gate_mlp, self.mlp(h), mod_segments)
+
+    def _forward_half(self, x, t_emb, mod_segments, rope_freqs, transformer_options, guard):
+        # x is the float32 stream; attention and MLP run in float16 (half.py)
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaln_proj(t_emb)
+        h = _mod_scale_shift(half.rms_norm(self.norm1, x), shift_msa, scale_msa, mod_segments)
+        x = _mod_gate(x, gate_msa, half.attention(self.attn, h, rope_freqs, transformer_options, guard), mod_segments)
+        h = _mod_scale_shift(half.rms_norm(self.norm2, x), shift_mlp, scale_mlp, mod_segments)
+        return _mod_gate(x, gate_mlp, half.mlp(self.mlp, h, guard), mod_segments)
 
 
 class FinalLayer(nn.Module):
@@ -201,7 +216,7 @@ class FinalLayer(nn.Module):
 
         def mod(seg):
             a, b, row = seg
-            out = self.norm(x[a:b]) * (1.0 + _mod_row(scale, row, scale.dtype)) + _mod_row(shift, row, shift.dtype)
+            out = half.rms_norm(self.norm, x[a:b]) * (1.0 + _mod_row(scale, row, scale.dtype)) + _mod_row(shift, row, shift.dtype)
             return out.to(torch.float32)
 
         # a PDD LoRA bank stacks n heads in the rows of the output projection: in the weight once Forge merged the

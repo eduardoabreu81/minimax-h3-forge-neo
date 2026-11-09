@@ -62,10 +62,12 @@ def attention(q, k, v, heads, transformer_options=None):
 
 @contextlib.contextmanager
 def weight_and_bias(layer, ref):
-    """A linear layer's weight and bias on ref's device and dtype, LoRA patches applied, as Forge's Linear does."""
+    """A layer's weight and bias (None without one) on ref's device and dtype, LoRA patches applied, as Forge's
+    Linear does."""
     if weights_manual_cast is not None and hasattr(layer, "weight_function"):
         weight, bias, signal = weights_manual_cast(layer, ref)
         with main_stream_worker(weight, bias, signal):
             yield weight, bias
         return
-    yield layer.weight.to(ref), layer.bias.to(ref)
+    bias = getattr(layer, "bias", None)
+    yield layer.weight.to(ref), bias.to(ref) if bias is not None else None
