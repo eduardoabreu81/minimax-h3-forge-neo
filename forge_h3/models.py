@@ -6,16 +6,20 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-from .contracts import H3, PH3_IMAGE, H3Error
+from .contracts import H3, H3_IMAGE, PH3_IMAGE, H3Error
 
 MAX_HEADER_BYTES = 32 * 1024 * 1024
 ROLE_LABELS = {"dit": "diffusion model", "text_encoder": "text encoder",
                "video_vae": "video VAE", "audio_vae": "audio VAE",
-               "ph3_text_encoder": "P-H3-Image text encoder", "ph3_vae": "P-H3-Image VAE"}
+               "ph3_text_encoder": "P-H3-Image text encoder", "ph3_vae": "P-H3-Image VAE",
+               "h3i_vae": "MiniMax-H3-Image VAE"}
 
 # MiniMax H3 itself, and PrunaAI's P-H3-Image (contracts.VARIANTS): the DiT files cannot tell them apart, so the selected
 # text encoder and VAE decide. The P-H3-Image VAE decodes one frame per latent: 3 channels x 1 x 16 x 16 outputs per token, where H3's has 4 frames
 PH3_DECODER_OUT = 3 * 16 * 16
+# MiniMaxAI's MiniMax-H3-Image: H3's DiT without the audio stream (ModelInfo.variant "image"), H3's text encoder, and an
+# image VAE with a single-frame decoder half as wide as P-H3-Image's (16 heads of 64)
+H3I_DECODER_WIDTH = 1024
 
 
 def _unique_pairs(pairs):
@@ -159,6 +163,10 @@ def _role(keys):
     if {"video_patch_proj.weight", "audio_patch_proj.weight",
             "final_layer.video_out.weight", "final_layer.audio_out.weight"} <= clean:
         return "dit"
+    if ({"video_patch_proj.weight", "condition_proj.weight", "final_layer.video_out.weight"} <= clean
+            and not any(k.startswith(("audio_patch_proj.", "final_layer.audio_out.")) for k in clean)):
+        # MiniMax-H3-Image
+        return "dit"
     if (any(k.endswith("embed_tokens.weight") for k in keys) and any("visual." in k for k in keys)
             and any("layers.49." in k for k in keys)):
         return "text_encoder"
@@ -177,6 +185,9 @@ def _ph3_role(header, keys):
     proj = header.get("decoder.proj_out.weight")
     if (isinstance(proj, dict) and proj["shape"][:1] == [PH3_DECODER_OUT]
             and any(k.startswith("decoder.register_tokens") for k in keys)):
+        embed = header.get("decoder.x_embedder.weight")
+        if isinstance(embed, dict) and embed["shape"][:1] == [H3I_DECODER_WIDTH]:
+            return "h3i_vae"
         return "ph3_vae"
     return None
 
@@ -274,6 +285,8 @@ def inspect_model(path):
     variant = "fast" if fast else "standard"
     if role == "video_vae" and any(k.endswith(".comfy_quant") for k in keys):
         variant = "quantized"
+    if role == "dit" and not any(k.removeprefix("model.diffusion_model.").startswith("audio_patch_proj.") for k in keys):
+        variant = "image"
     if suffix == ".gguf":
         return ModelInfo(path, role, _gguf_quantization(path, header, role), variant)
     return ModelInfo(path, role, _quantization(header, keys, path), variant)
@@ -284,7 +297,7 @@ class Components:
     dit: ModelInfo
     text_encoder: ModelInfo
     video_vae: ModelInfo
-    # None for P-H3-Image, which has no audio VAE
+    # None for P-H3-Image and MiniMax-H3-Image, which have no audio VAE
     audio_vae: ModelInfo | None
     variant: str = H3
 
@@ -311,6 +324,8 @@ def resolve_components(dit_path, module_paths):
         if item.role in resolved:
             raise H3Error(f"More than one H3 {ROLE_LABELS[item.role]} is selected.")
         resolved[item.role] = item
+    if dit.variant == "image" or "h3i_vae" in resolved:
+        return _h3_image_components(resolved)
     if any(role.startswith("ph3_") for role in resolved):
         return _ph3_components(resolved)
     if "text_encoder" in resolved and resolved["text_encoder"].quantization == "nvfp4":
@@ -320,6 +335,47 @@ def resolve_components(dit_path, module_paths):
         if role not in resolved:
             raise H3Error(f"Select the H3 {ROLE_LABELS[role]} in Forge's VAE / Text Encoder field.")
     return Components(**resolved)
+
+
+def _h3_image_components(resolved):
+    """MiniMax-H3-Image: its own diffusion model and image VAE with H3's text encoder, and no audio VAE."""
+    if resolved["dit"].variant != "image":
+        raise H3Error("The MiniMax-H3-Image VAE needs the MiniMax-H3-Image diffusion model: select a "
+                      "minimax_h3_image checkpoint, or the H3 video VAE and audio VAE for this one.")
+    if "h3i_vae" not in resolved and "video_vae" in resolved:
+        raise H3Error("The MiniMax-H3-Image diffusion model needs its own image VAE: select minimax_h3_image_vae in "
+                      "place of the H3 video VAE.")
+    other = [ROLE_LABELS[role] for role in ("ph3_text_encoder", "ph3_vae", "video_vae", "audio_vae") if role in resolved]
+    if other:
+        raise H3Error(f"MiniMax-H3-Image does not take the {' or the '.join(other)}: deselect "
+                      f"{'it' if len(other) == 1 else 'them'}. It uses H3's text encoder and its own image VAE.")
+    if "text_encoder" in resolved and resolved["text_encoder"].quantization == "nvfp4":
+        raise H3Error("The NVFP4 AWQ text encoder does not encode prompts correctly in Forge Neo yet. Select qwen3vl_32b_minimax_h3_int8_convrot or the bf16 text encoder.")
+    for role in ("text_encoder", "h3i_vae"):
+        if role not in resolved:
+            raise H3Error(f"Select the {'H3 text encoder' if role == 'text_encoder' else ROLE_LABELS[role]} in Forge's "
+                          "VAE / Text Encoder field: MiniMax-H3-Image uses H3's text encoder and its own image VAE.")
+    return Components(dit=resolved["dit"], text_encoder=resolved["text_encoder"], video_vae=resolved["h3i_vae"],
+                      audio_vae=None, variant=H3_IMAGE)
+
+
+def grid_from_metadata(metadata) -> tuple[float, ...] | None:
+    """The PDD sigma grid a checkpoint's metadata declares ({"config": {"transformer": {"pdd_sigmas": [...]}}}): a
+    decreasing grid from 1 to 0, else None."""
+    try:
+        config = (metadata or {}).get("config")
+        grid = json.loads(config).get("transformer", {}).get("pdd_sigmas") if isinstance(config, str) else None
+        grid = tuple(float(s) for s in grid) if isinstance(grid, list) else None
+    except (ValueError, TypeError, AttributeError):
+        return None
+    if not grid or len(grid) < 2 or grid[0] != 1.0 or grid[-1] != 0.0 or any(b >= a for a, b in zip(grid, grid[1:])):
+        return None
+    return grid
+
+
+def image_grid(path) -> tuple[float, ...] | None:
+    """The PDD sigma grid a MiniMax-H3-Image checkpoint declares in its metadata (Comfy-Org's files do), else None."""
+    return grid_from_metadata(read_header(path).get("__metadata__"))
 
 
 def _ph3_components(resolved):

@@ -6,6 +6,10 @@ Timestep domain: the model receives the video sigma and derives per-token timest
 the audio stream runs on its own shifted schedule (video shift 12 / audio shift 3), mapped from the video sigma in
 closed form. The sampler carries the audio latent scaled onto the video schedule; forward() undoes that scale and
 converts the velocity back, so _forward only sees the stream's own latent.
+
+MiniMax-H3-Image (ComfyUI MiniMaxH3ImageModel) is the same stack without the audio stream: the packed sequence is
+[text | reference images | target image], its audio latent is empty, and its output heads are a PDD bank on the
+checkpoint's own sigma grid (pdd_sigmas).
 """
 
 import torch
@@ -46,7 +50,7 @@ class MiniMaxH3Model(nn.Module):
                  timestep_input_dim=256, time_embed_hidden_size=5376, time_embed_dim=2688,
                  rope_inv_freq_len=16, norm_eps=1e-5, qk_norm_eps=1e-5, final_norm_eps=1e-5,
                  sigma_shift_video=12.0, sigma_shift_audio=3.0,
-                 adaln_curve_grid=None, gate_compress=False,
+                 adaln_curve_grid=None, gate_compress=False, pdd_steps=1, pdd_sigmas=None,
                  dtype=None, device=None, **kwargs):
         super().__init__()
         self.dtype = dtype
@@ -64,7 +68,11 @@ class MiniMaxH3Model(nn.Module):
         video_patch_dim = latents_dim * self.patch_size[0] * self.patch_size[1] * self.patch_size[2]
 
         self.video_patch_proj = nn.Linear(video_patch_dim, hidden_size, bias=True, dtype=torch.float32, device=device)
-        self.audio_patch_proj = nn.Linear(audio_latents_dim, hidden_size, bias=True, dtype=torch.float32, device=device)
+        # MiniMax-H3-Image has no audio stream (audio_latents_dim None)
+        self.audio_patch_proj = None
+        if audio_latents_dim is not None:
+            self.audio_patch_proj = nn.Linear(audio_latents_dim, hidden_size, bias=True, dtype=torch.float32,
+                                              device=device)
         self.condition_proj = nn.Linear(text_dim, hidden_size, bias=True, dtype=dtype, device=device)
         if self.use_adaln_curves:
             self.register_buffer("adaln_t_table", torch.empty(adaln_curve_grid, time_embed_dim, dtype=torch.float32, device=device))
@@ -82,7 +90,9 @@ class MiniMaxH3Model(nn.Module):
                      dtype=dtype, device=device)
             for _ in range(num_layers)])
         self.final_layer = FinalLayer(hidden_size, time_embed_dim, video_patch_dim, audio_latents_dim,
-                                      final_norm_eps, **curve, dtype=dtype, device=device)
+                                      final_norm_eps, **curve, pdd_steps=pdd_steps, dtype=dtype, device=device)
+        # the sigma grid of a PDD checkpoint's heads (MiniMax-H3-Image); the engine sets the selected file's own
+        self.pdd_sigmas = tuple(float(s) for s in pdd_sigmas) if pdd_sigmas is not None else None
 
         # set by the engine for each request (engine.Generation): stream shapes, seed, audio scale
         self.generation = None
@@ -135,11 +145,12 @@ class MiniMaxH3Model(nn.Module):
                                      payload.get("audio_cond_noise_aug", AUDIO_COND_TIMESTEP), seed + 1, device)
         all_video_rows = self._merge_rows(patchify_video(video_x.to(torch.float32), self.patch_size), cond_video,
                                           layout.img_update.to(device))
-        all_audio_rows = self._merge_rows(pack_audio(audio_x.to(torch.float32)), cond_audio,
-                                          layout.audio_update.to(device))
-
         video_embed = self.video_patch_proj(all_video_rows).to(dtype)
-        audio_embed = self.audio_patch_proj(all_audio_rows).to(dtype)
+        audio_embed = None
+        if self.audio_patch_proj is not None and layout.audio_update.numel():
+            all_audio_rows = self._merge_rows(pack_audio(audio_x.to(torch.float32)), cond_audio,
+                                              layout.audio_update.to(device))
+            audio_embed = self.audio_patch_proj(all_audio_rows).to(dtype)
         text_states = context[0]
         if text_states.shape[-1] != self.hidden_size:
             if guard is not None:
@@ -373,19 +384,25 @@ class MiniMaxH3Model(nn.Module):
                 transformer_options["block_index"] = i
                 h = block(h, t_emb, mod_segments, rope_freqs, transformer_options)
 
-        # target streams are single contiguous segments (audio then video, last two)
+        # target streams are single contiguous segments (audio then video, last two; the image model has no audio)
         va, vb, _ = next(s for s in layout.segments if s[2] == "video")
-        aa, ab, _ = next(s for s in layout.segments if s[2] == "audio")
         video_row = rows_to_mod_index(video_rows_t, 0) // 3 if video_rows_t is not None else t_row[seg_t["video"]]
-        audio_row = rows_to_mod_index(audio_rows_t, 0) // 3 if audio_rows_t is not None else t_row[seg_t["audio"]]
-        v, a = self.final_layer(h, t_emb, (va, vb, video_row), (aa, ab, audio_row), sigma_v,
-                                transformer_options.get("sample_sigmas"), (shift_v, shift_a))
+        if self.final_layer.audio_out is None:
+            v = self.final_layer(h, t_emb, (va, vb, video_row), None, sigma_v, transformer_options.get("sample_sigmas"),
+                                 (shift_v, shift_a), grid=self.pdd_sigmas)
+            a = None
+        else:
+            aa, ab, _ = next(s for s in layout.segments if s[2] == "audio")
+            audio_row = rows_to_mod_index(audio_rows_t, 0) // 3 if audio_rows_t is not None else t_row[seg_t["audio"]]
+            v, a = self.final_layer(h, t_emb, (va, vb, video_row), (aa, ab, audio_row), sigma_v,
+                                    transformer_options.get("sample_sigmas"), (shift_v, shift_a))
         if guard is not None:
-            guard.watch(v, a)
+            guard.watch(*(t for t in (v, a) if t is not None))
 
         video_out = unpatchify_video(v, latent_t, lat_h // 2, lat_w // 2, self.latents_dim, self.patch_size)
         video_out = video_out[:, :, :orig_t, :orig_h, :orig_w]
-        return [-video_out.to(video_x.dtype), -unpack_audio(a).to(audio_x.dtype)]
+        audio_out = torch.zeros_like(audio_x) if a is None else -unpack_audio(a).to(audio_x.dtype)
+        return [-video_out.to(video_x.dtype), audio_out]
 
     @staticmethod
     def _mod_segments(layout, seg_t, t_row, text_tags, video_rows_t, audio_rows_t, rows_to_mod_index):

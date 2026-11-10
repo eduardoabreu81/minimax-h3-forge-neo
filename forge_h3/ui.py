@@ -10,10 +10,12 @@ from .contracts import (
     DEFAULT_FRAMES,
     FPS,
     H3,
+    H3_IMAGE,
     MAX_REF_AUDIOS,
     MAX_REF_VIDEOS,
     PH3_IMAGE,
     SOUNDTRACKS,
+    STILL_VARIANTS,
     H3Error,
 )
 from .control import PREPROCESSORS
@@ -26,8 +28,16 @@ from .upscale import upscaler_names
 
 COMPONENTS = {}
 # the UI presets the extension adds (native/presets.py) and the sampler and schedule each starts from
-H3_PRESET, PH3_PRESET = "h3", "ph3"
-PRESET_DEFAULTS = {H3_PRESET: ("Res Multistep", "Simple"), PH3_PRESET: ("Euler", "Simple")}
+H3_PRESET, PH3_PRESET, H3I_PRESET = "h3", "ph3", "h3i"
+PRESET_DEFAULTS = {H3_PRESET: ("Res Multistep", "Simple"), PH3_PRESET: ("Euler", "Simple"), H3I_PRESET: ("Euler", "Simple")}
+# the preset whose settings each variant brings when the files switch to it
+VARIANT_PRESETS = {H3: H3_PRESET, PH3_IMAGE: PH3_PRESET, H3_IMAGE: H3I_PRESET}
+STILL_STATUS = {
+    PH3_IMAGE: ("P-H3-Image makes still images: from text, or in img2img an edit of the input image with the gallery "
+                "pictures as references. Use Euler, 8 steps and CFG 1 (the ph3 preset)."),
+    H3_IMAGE: ("MiniMax-H3-Image makes still images: from text, or in img2img an edit of the input image with up to 15 "
+               "gallery pictures as references. Use Euler, 6 steps and CFG 1 (the h3i preset), at 2048x2048 or more."),
+}
 NATIVE_CONTROLS = ("batch_size", "batch_count", "sampling", "scheduler", "cfg_scale")
 # Forge's InputAccordions that do nothing for H3 video, by elem_id after the tab: Hires. fix, and the Refiner when
 # Settings shows it (Forge Neo's processing script names it just "enable"); hidden and turned off while an H3
@@ -254,9 +264,10 @@ class Panel:
                     ref2va = components.mode == "ref2va"
                     mode = ("**Mode:** Ref2VA, reference pictures" if components.mode == "ref2va"
                             else "**Mode:** FL2VA, first and last frame")
-                    if variant == PH3_IMAGE:
+                    if variant in STILL_VARIANTS:
                         ref2va = False
-                        mode = "**Mode:** P-H3-Image, still images from text or edited from pictures"
+                        name = "P-H3-Image" if variant == PH3_IMAGE else "MiniMax-H3-Image"
+                        mode = f"**Mode:** {name}, still images from text or edited from pictures"
                     summary = "  \n".join([mode] + [f"**{ROLE_LABELS[m.role].title()}:** {html.escape(m.path.name)} ({m.quantization})"
                                                     for m in components.models])
                     error = ""
@@ -265,9 +276,9 @@ class Panel:
             # the variant the selected files make; while they cannot be resolved, the last one stays
             previous = saved.get("variant")
             current = (variant or previous or H3) if active else None
-            ph3 = current == PH3_IMAGE
-            # P-H3-Image makes still images only
-            if ph3:
+            still_only = current in STILL_VARIANTS
+            # the image models make still images only
+            if still_only:
                 output = "Still image"
             updates = [gr.update() for _ in native]
             frames = values[0]
@@ -279,7 +290,7 @@ class Panel:
                 # the preset's sampler, schedule and CFG on entering H3, and when the files switch between H3 and
                 # P-H3-Image (Forge's own preset switch brings its settings itself)
                 if entering or (variant is not None and previous is not None and variant != previous):
-                    sampler, scheduler, cfg = preset_settings(self.tab, PH3_PRESET if ph3 else H3_PRESET)
+                    sampler, scheduler, cfg = preset_settings(self.tab, VARIANT_PRESETS[current])
                     updates[2] = gr.update(value=sampler)
                     updates[3] = gr.update(value=scheduler)
                     updates[4] = gr.update(value=cfg) if cfg is not None else gr.update()
@@ -291,17 +302,16 @@ class Panel:
                 saved.pop("variant", None)
             else:
                 saved["variant"] = current
-            if ph3:
+            if still_only:
                 output_update = gr.update(value="Still image", interactive=False)
-            elif previous == PH3_IMAGE:
+            elif previous in STILL_VARIANTS:
                 output_update = gr.update(interactive=True)
             else:
                 output_update = gr.update()
             if error:
                 status = html.escape(error)
-            elif ph3:
-                status = ("P-H3-Image makes still images: from text, or in img2img an edit of the input image with the "
-                          "gallery pictures as references. Use Euler, 8 steps and CFG 1 (the ph3 preset).")
+            elif still_only:
+                status = STILL_STATUS[current]
             elif output == "Video":
                 status = "H3 generates audio jointly. This checkbox controls audio in the exported video."
             else:

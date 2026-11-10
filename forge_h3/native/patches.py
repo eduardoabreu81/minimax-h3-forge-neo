@@ -18,7 +18,7 @@ from backend.state_dict import load_state_dict
 from huggingface_guess import detection, model_list
 from transformers.modeling_utils import no_init_weights
 
-from . import filebacked, gguf_vision, model, ph3, release, taeh3, vae
+from . import filebacked, gguf_vision, h3_image, model, ph3, release, taeh3, vae
 from .engine import MiniMaxH3Engine
 from .islands import fp32_islands, restore_fp32
 from .text_encoder import PH3ImageQwen3VL, Qwen3VL32B
@@ -28,6 +28,10 @@ logger = logging.getLogger("forge_h3")
 
 TE_KEYS = ("visual.deepstack_merger_list.0.norm.weight", "model.layers.49.self_attn.q_proj.weight")
 TE_PREFIX = "qwen3vl_32b.transformer."
+
+# ComfyUI's per-block attention choice in the Comfy-Org MiniMax-H3-Image int8 file ({"attention": "comfy_kitchen_int8"}),
+# a small uint8 tensor that is not a weight; Forge's attention runs instead
+ATTENTION_CONFIG_SUFFIX = ".comfy_attention.config"
 
 MISSING_TE = ("MiniMax H3 needs its Qwen3-VL 32B text encoder: select a qwen3vl_32b_minimax_h3 file under VAE / Text "
               "Encoder")
@@ -87,10 +91,10 @@ def _hook_replace_state_dict() -> None:
     def replace_state_dict(sd: dict, asd: dict, guess, path):
         if not isinstance(guess, model.MiniMaxH3):
             return original(sd, asd, guess, path)
-        # P-H3-Image's text encoder and VAE first: its VAE also has every key H3's video VAE is recognized by
+        # the image models' text encoder and VAEs first: their VAEs also have every key H3's video VAE is recognized by
         if ph3.is_text_encoder(asd):
             _replace(sd, f"{guess.text_encoder_key_prefix[0]}{TE_PREFIX}", ph3.convert_text_encoder(asd))
-        elif ph3.is_vae(asd):
+        elif h3_image.is_vae(asd) or ph3.is_vae(asd):
             _replace(sd, f"{guess.vae_key_prefix[0]}video.", vae.convert_video_vae(asd))
         elif _is_h3_text_encoder(asd):
             _replace(sd, f"{guess.text_encoder_key_prefix[0]}{TE_PREFIX}", asd)
@@ -105,26 +109,29 @@ def _hook_replace_state_dict() -> None:
     loader.replace_state_dict = replace_state_dict
 
 
-def _load_ph3_vae(state_dict: dict) -> ph3.AutoencoderPH3Image:
-    # P-H3-Image: the picture VAE alone; its int8 file quantizes the decoder linears as Kijai's H3 video VAE does
+def _load_image_vae(state_dict: dict, name: str, vae_class, pair_class):
+    # an image model's picture VAE alone (P-H3-Image, MiniMax-H3-Image); an int8 file quantizes the decoder linears as
+    # Kijai's H3 video VAE does
     if any(k.startswith("audio.") for k in state_dict):
-        raise ValueError("P-H3-Image has no audio VAE: deselect the H3 audio VAE under VAE / Text Encoder")
+        raise ValueError(f"{name} has no audio VAE: deselect the H3 audio VAE under VAE / Text Encoder")
     layers = vae.video_layers(state_dict)
     with no_init_weights():
         video = None
         if vae.is_quantized(state_dict, "video."):
             with using_forge_operations(device=memory_management.cpu, dtype=torch.float32, manual_cast_enabled=True,
                                         extra_dtype={"mixed_ops": True, "TE": False}):
-                video = ph3.PH3ImageVAE(num_layers=layers)
+                video = vae_class(num_layers=layers)
         with using_forge_operations(device=memory_management.cpu, dtype=torch.float32, extra_dtype="vae"):
-            pair = ph3.AutoencoderPH3Image(video_layers=layers, video=video)
-    load_state_dict(pair, state_dict, log_name="P-H3-Image VAE")
+            pair = pair_class(video_layers=layers, video=video)
+    load_state_dict(pair, state_dict, log_name=f"{name} VAE")
     return pair
 
 
 def _load_vae(state_dict: dict) -> vae.AutoencoderMiniMaxH3:
+    if isinstance(state_dict, dict) and h3_image.is_vae(state_dict, "video."):
+        return _load_image_vae(state_dict, "MiniMax-H3-Image", h3_image.H3ImageVAE, h3_image.AutoencoderH3Image)
     if isinstance(state_dict, dict) and ph3.is_vae(state_dict, "video."):
-        return _load_ph3_vae(state_dict)
+        return _load_image_vae(state_dict, "P-H3-Image", ph3.PH3ImageVAE, ph3.AutoencoderPH3Image)
     if not isinstance(state_dict, dict) or not any(k.startswith("video.") for k in state_dict) \
             or not any(k.startswith("audio.") for k in state_dict):
         raise ValueError(vae.MISSING_VAE)
@@ -167,6 +174,8 @@ def _hook_components() -> None:
         if cls_name == "AutoencoderMiniMaxH3":
             return _load_vae(state_dict)
         if cls_name == "MiniMaxH3Transformer3DModel":
+            for key in [k for k in state_dict if k.endswith(ATTENTION_CONFIG_SUFFIX)]:
+                del state_dict[key]
             # the Krea 2 branch is a generic single-stream DiT load: dtype, quantization and device handling
             islands = fp32_islands(state_dict, curve="adaln_t_table" in state_dict)
             storages = filebacked.file_storages(state_dict)

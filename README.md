@@ -42,6 +42,10 @@ Generate **videos with sound** with **[MiniMax H3](https://github.com/MiniMax-AI
 
 ## 🆕 What's New
 
+### v0.9.0 - MiniMax-H3-Image
+
+- **[MiniMax-H3-Image](https://huggingface.co/MiniMaxAI/MiniMax-H3-Image)**, MiniMax's own image model of the H3 family - stills from text, or edits of a picture with up to 15 more as references, in 6 steps. It uses **H3's text encoder** (the file you already have) with its own checkpoint and VAE, and no audio VAE. Select its files and the extension recognizes it; H3 and P-H3-Image work as before. A new **h3i** UI preset keeps its files and settings. **Experimental:** checked on the CPU against the published files and against ComfyUI's code, not yet run on a GPU
+
 ### v0.8.0 - Still Images and P-H3-Image
 
 - **Still image renders a true single frame** - instead of the first frame of a 5-frame clip, so the same seed gives a different picture than before. In img2img it edits: the input image is `<Picture 1>` and the **ImageStitch Integrated** gallery holds the next pictures, with any H3 checkpoint
@@ -180,6 +184,15 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 - **Include generated audio** checkbox for a silent video
 - **Still image** output: a true single frame, in txt2img or edited from an input image and reference pictures, with the method from [Fizgig H3 Still](https://github.com/shootthesound/ComfyUI-Fizgig-H3-Still) by Peter Neill (MIT)
 
+### 🖼️ MiniMax-H3-Image (Experimental)
+
+- MiniMax's **image model** of the H3 family: detailed stills from about 4 to 20 megapixels, from text or edited from pictures
+- Pick the **h3i** UI preset (Euler, 6 steps, CFG 1, 2048x2048), then its checkpoint, **H3's text encoder** and **its own VAE** - no video VAE, no audio VAE
+- The extension recognizes it from the files, sets **Output** to **Still image** by itself and always samples on the model's own 6-step schedule
+- **Bigger is better:** 2048x2048 is the smallest size it is made for, and MiniMax gets its best results around 4096x4096
+- **Editing** in img2img: the input image is `<Picture 1>`, the ImageStitch gallery the next ones, up to 16 in all. Name them in the prompt: "put the hat from `<Picture 2>` on the man in `<Picture 1>`"
+- It follows **long, detailed English descriptions** of the whole picture best. MiniMax's prompt expander is not included: write the detailed prompt yourself, or let another LLM expand it
+
 ### 🖼️ P-H3-Image (Experimental)
 
 - PrunaAI's **image-only** version of H3: stills up to 8 megapixels, from text or edited from pictures
@@ -295,6 +308,16 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 | Checkpoint | [p-h3-image_int8_convrot](https://huggingface.co/PrunaAI/P-H3-Image-Comfy/blob/main/diffusion_models/p-h3-image_int8_convrot.safetensors), or `_w4a8` (13.4 GB) | 21.2 GB | `models/Stable-diffusion` |
 | Text encoder | [p-h3-image_text_encoder_int8_convrot](https://huggingface.co/PrunaAI/P-H3-Image-Comfy/blob/main/text_encoders/p-h3-image_text_encoder_int8_convrot.safetensors), or `_bf16` | 5.1 GB | `models/text_encoder` |
 | VAE | [p-h3-image_vae_bf16](https://huggingface.co/PrunaAI/P-H3-Image-Comfy/blob/main/vae/p-h3-image_vae_bf16.safetensors), or `_int8_convrot` | 5.6 GB | `models/VAE` |
+
+**MiniMax-H3-Image (experimental), for still images only** - from [Comfy-Org/MiniMax-H3-Image](https://huggingface.co/Comfy-Org/MiniMax-H3-Image/tree/main). In the **h3i** UI preset, select the checkpoint with **H3's text encoder** (the one above) and **its own VAE** - no video VAE, no audio VAE:
+
+| Part | File | Size | Folder |
+| :--- | :--- | :--- | :--- |
+| Checkpoint | [minimax_h3_image_pruned_int8_convrot](https://huggingface.co/Comfy-Org/MiniMax-H3-Image/blob/main/diffusion_models/minimax_h3_image_pruned_int8_convrot.safetensors), or `_w4a8` (12.5 GB) | 21 GB | `models/Stable-diffusion` |
+| Text encoder | H3's own, as above (also in this repository under the same name) | | `models/text_encoder` |
+| VAE | [minimax_h3_image_vae_fp16](https://huggingface.co/Comfy-Org/MiniMax-H3-Image/blob/main/vae/minimax_h3_image_vae_fp16.safetensors) | 1.2 GB | `models/VAE` |
+
+MiniMax-H3-Image has its own license, different from H3's: a company with more than 1 million USD a year in revenue, or anyone offering it as an online service, needs MiniMax's written permission. Read the [license](https://huggingface.co/MiniMaxAI/MiniMax-H3-Image/blob/main/LICENSE) before using it.
 
 Instead of its checkpoint, H3's own `minimax_h3_fl2va` checkpoint with PrunaAI's [p-h3-image_lora_bf16](https://huggingface.co/PrunaAI/P-H3-Image-Comfy/blob/main/loras/p-h3-image_lora_bf16.safetensors) at weight 1 should work too. P-H3-Image has its own license terms - read its model card before using it.
 

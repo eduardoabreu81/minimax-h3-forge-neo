@@ -1,7 +1,8 @@
-"""The "h3" and "ph3" UI presets, added at runtime: PresetArch gains a member each and the presets' options are
+"""The "h3", "ph3" and "h3i" UI presets, added at runtime: PresetArch gains a member each and the presets' options are
 registered through Forge Neo's own presets.register, so they match every other preset (as in the Qwen-Image 2.1
-extension). Forge keeps a checkpoint and VAE / Text Encoder selection per preset, so "h3" (video) and "ph3"
-(P-H3-Image stills) switch between the two sets of files in one click; the files still decide the variant.
+extension). Forge keeps a checkpoint and VAE / Text Encoder selection per preset, so "h3" (video), "ph3" (P-H3-Image
+stills) and "h3i" (MiniMax-H3-Image stills) switch between their sets of files in one click; the files still decide the
+variant.
 
 Frames are left out on purpose: Forge's video presets step the Frames slider by the frame rate, while H3 needs its
 17n + 5 grid, which the H3 panel sets when an H3 checkpoint is selected.
@@ -32,7 +33,17 @@ PH3_CFG = 1.0
 PH3_SIZE = 2048
 PH3_SIZE_OPTIONS = tuple(f"{PH3_PRESET}_{kind}_{side}" for kind in ("t2i", "i2i") for side in ("width", "height"))
 
-PRESETS = (PRESET, PH3_PRESET)
+# MiniMax-H3-Image: Euler, 6 steps (its PDD heads), CFG 1, on its own sigma grid with no shift, so no Shift slider. It
+# works from about 4 MP and is best around 16 MP; 2048x2048 is ComfyUI's default and the largest the sliders allow
+H3I_PRESET = "h3i"
+H3I_SAMPLER = "Euler"
+H3I_SCHEDULER = "Simple"
+H3I_STEPS = 6
+H3I_CFG = 1.0
+H3I_SIZE = 2048
+H3I_SIZE_OPTIONS = tuple(f"{H3I_PRESET}_{kind}_{side}" for kind in ("t2i", "i2i") for side in ("width", "height"))
+
+PRESETS = (PRESET, PH3_PRESET, H3I_PRESET)
 
 
 def _add_enum_member(enum_cls: type[Enum], name: str) -> Enum:
@@ -76,6 +87,12 @@ def register() -> None:
     presets.STEPS[ph3] = PH3_STEPS
     presets.CFG[ph3] = PH3_CFG
 
+    h3i = _add_enum_member(presets.PresetArch, H3I_PRESET)
+    presets.SAMPLERS[h3i] = H3I_SAMPLER
+    presets.SCHEDULERS[h3i] = H3I_SCHEDULER
+    presets.STEPS[h3i] = H3I_STEPS
+    presets.CFG[h3i] = H3I_CFG
+
     from modules import shared
 
     templates: dict = {}
@@ -84,4 +101,6 @@ def register() -> None:
         if _is_preset_option(key) and key not in shared.opts.data_labels:
             if key in PH3_SIZE_OPTIONS and hasattr(info, "default"):
                 info.default = PH3_SIZE
+            if key in H3I_SIZE_OPTIONS and hasattr(info, "default"):
+                info.default = H3I_SIZE
             shared.opts.add_option(key, info)

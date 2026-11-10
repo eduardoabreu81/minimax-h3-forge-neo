@@ -274,7 +274,8 @@ class TransformerBlock(nn.Module):
 
 class ViT3DDecoder(nn.Module):
     def __init__(self, patch_size=16, patch_size_t=4, in_channels=24, out_channels=3, num_layers=36, heads=32,
-                 dim_head=64, rope_theta=100.0, rope_dim_ratio=0.75, bias=True, eps=1e-5, num_register_tokens=4):
+                 dim_head=64, rope_theta=100.0, rope_dim_ratio=0.75, rope_dims=3, bias=True, eps=1e-5,
+                 num_register_tokens=4):
         super().__init__()
         dim = heads * dim_head
         self.patch_size = patch_size
@@ -282,7 +283,8 @@ class ViT3DDecoder(nn.Module):
         self.out_channels = out_channels
         self.num_register_tokens = num_register_tokens
 
-        self.pos_embed = RotaryEmbeddingND(int(dim_head * rope_dim_ratio), rope_theta, n_dim=3)
+        # rope over the trailing rope_dims latent axes of (t, h, w); MiniMax-H3-Image's 2D decoder takes (h, w)
+        self.pos_embed = RotaryEmbeddingND(int(dim_head * rope_dim_ratio), rope_theta, n_dim=rope_dims)
         self.x_embedder = nn.Linear(in_channels, dim)
         self.register_tokens = nn.Parameter(torch.empty(1, num_register_tokens, dim))
         # unused at inference; kept so the checkpoint loads without leftover keys
@@ -294,7 +296,7 @@ class ViT3DDecoder(nn.Module):
 
     def _token_ids(self, T, H, W, device, dtype):
         # rope coordinates of the latent tokens; P-H3-Image's single-frame decoder fixes the time one (ph3.py)
-        return create_token_ids((T, H, W), device, dtype)
+        return create_token_ids((T, H, W)[-self.pos_embed.n_dim:], device, dtype)
 
     def forward(self, x):
         B, _, latent_T, latent_H, latent_W = x.shape
@@ -305,7 +307,8 @@ class ViT3DDecoder(nn.Module):
         h = torch.cat([h, registers, torch.zeros_like(h[:, 0:1, :])], dim=1)
 
         img_ids = self._token_ids(latent_T, latent_H, latent_W, x.device, x.dtype).expand(B, -1, -1)
-        img_ids = torch.cat([img_ids, torch.zeros((B, num_suffix, 3), device=x.device, dtype=img_ids.dtype)], dim=1)
+        suffix = torch.zeros((B, num_suffix, self.pos_embed.n_dim), device=x.device, dtype=img_ids.dtype)
+        img_ids = torch.cat([img_ids, suffix], dim=1)
         rotary_pos_emb = self.pos_embed(img_ids)
 
         for block in self.transformer_blocks:

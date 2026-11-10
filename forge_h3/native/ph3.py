@@ -222,6 +222,8 @@ class PH3ImageDecoder(ViT3DDecoder):
 class PH3ImageVAE(MiniMaxH3VideoVAE):
     """H3's encoder with the single-frame decoder; it encodes and decodes one picture at a time."""
 
+    label = "P-H3-Image"
+
     def __init__(self, num_layers=36, **kwargs):
         super().__init__(num_layers=0, **kwargs)
         self.decoder = PH3ImageDecoder(patch_size=self.vae_ratio, in_channels=24, out_channels=3, num_layers=num_layers)
@@ -231,7 +233,7 @@ class PH3ImageVAE(MiniMaxH3VideoVAE):
         if x.ndim == 4:
             x = x.unsqueeze(2)
         if x.shape[2] != 1:
-            raise ValueError(f"The P-H3-Image VAE encodes single pictures only, got {x.shape[2]} frames")
+            raise ValueError(f"The {self.label} VAE encodes single pictures only, got {x.shape[2]} frames")
         device = x.device if device is None else device
         moments = self._adaptive_encode(self._normalize_pixels(x.to(device)))[:, :, -1:]
         mean, logvar = moments.float().chunk(2, dim=1)
@@ -242,7 +244,8 @@ class PH3ImageVAE(MiniMaxH3VideoVAE):
     def decode(self, z, output_buffer=None):
         # z: [B, 24, 1, H/16, W/16] normalized -> float32 pixels [B, 3, 1, H, W] in [0, 1]
         if z.shape[2] != 1:
-            raise ValueError(f"The P-H3-Image VAE decodes single-frame image latents only, got {z.shape[2]} latent frames")
+            raise ValueError(f"The {self.label} VAE decodes single-frame image latents only, got {z.shape[2]} latent "
+                             "frames")
         z = z * self.latents_std.view(1, -1, 1, 1, 1).to(z) + self.latents_mean.view(1, -1, 1, 1, 1).to(z)
         dec = self._finalize_pixels(self._adaptive_decode(z))
         if output_buffer is None:

@@ -81,13 +81,15 @@ def reference_size(width: int, height: int, clip_width: int, clip_height: int) -
             max(CANVAS_MULTIPLE, round(height * scale / CANVAS_MULTIPLE) * CANVAS_MULTIPLE))
 
 
-def collect(p, is_img2img: bool) -> list:
-    """The reference pictures of a request, in <Picture i> order: the img2img input image, then the gallery."""
+def collect(p, is_img2img: bool, limit: int = MAX_REFERENCES) -> list:
+    """The reference pictures of a request, in <Picture i> order: the img2img input image, then the gallery; limit is
+    MAX_REFERENCES, or 16 for MiniMax-H3-Image (contracts.max_references)."""
     images = list((getattr(p, "init_images", None) or [])[:1]) if is_img2img else []
     images += keyframes.stitch_gallery(p)
-    if len(images) > MAX_REFERENCES:
+    if len(images) > limit:
         counted = " (the img2img input image counts as <Picture 1>)" if is_img2img else ""
-        raise H3Error(f"H3 Ref2VA takes up to {MAX_REFERENCES} reference pictures; {len(images)} were given{counted}. "
+        model = "H3 Ref2VA" if limit == MAX_REFERENCES else "MiniMax-H3-Image"
+        raise H3Error(f"{model} takes up to {limit} reference pictures; {len(images)} were given{counted}. "
                       f"Remove some from the {keyframes.IMAGE_STITCH} gallery.")
     return images
 

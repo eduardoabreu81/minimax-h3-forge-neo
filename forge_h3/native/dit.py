@@ -199,19 +199,24 @@ class DiTBlock(nn.Module):
 
 
 class FinalLayer(nn.Module):
-    def __init__(self, hidden, t_dim, video_dim, audio_dim, eps, apply_silu=True, adaln_dtype=None,
+    def __init__(self, hidden, t_dim, video_dim, audio_dim, eps, apply_silu=True, adaln_dtype=None, pdd_steps=1,
                  dtype=None, device=None):
         super().__init__()
         self.norm = nn.RMSNorm(hidden, eps=eps, dtype=dtype, device=device)
         self.adaln_proj = AdalnProj(t_dim, hidden, 2, 1, apply_silu=apply_silu,
                                     dtype=adaln_dtype if adaln_dtype is not None else dtype, device=device)
-        # output heads are the checkpoint's fp32 island; norm/adaln are stored at model dtype
+        # output heads are the checkpoint's fp32 island; norm/adaln are stored at model dtype. A PDD checkpoint
+        # (MiniMax-H3-Image) ships pdd_steps stacked heads; MiniMax-H3-Image has no audio head
         self.video_dim = video_dim
-        self.video_out = nn.Linear(hidden, video_dim, bias=True, dtype=torch.float32, device=device)
-        self.audio_out = nn.Linear(hidden, audio_dim, bias=True, dtype=torch.float32, device=device)
+        self.video_out = nn.Linear(hidden, video_dim * pdd_steps, bias=True, dtype=torch.float32, device=device)
+        self.audio_out = None
+        if audio_dim is not None:
+            self.audio_out = nn.Linear(hidden, audio_dim * pdd_steps, bias=True, dtype=torch.float32, device=device)
 
-    def forward(self, x, t_emb, video_seg, audio_seg, sigma, sample_sigmas, shifts):
-        # video_seg / audio_seg: (start, stop, row) of the target streams, where row is a mod-row index or a per-token blend
+    def forward(self, x, t_emb, video_seg, audio_seg, sigma, sample_sigmas, shifts, grid=None):
+        # video_seg / audio_seg: (start, stop, row) of the target streams, where row is a mod-row index or a per-token
+        # blend; audio_seg is None for MiniMax-H3-Image, which returns the video output alone. grid: the sigma grid a
+        # PDD checkpoint's heads were distilled on (MiniMax-H3-Image), None for the shifted uniform grid of the Acc LoRAs
         shift, scale = self.adaln_proj(t_emb)
 
         def mod(seg):
@@ -223,6 +228,8 @@ class FinalLayer(nn.Module):
         # LoRA into it, otherwise in the reshape of the patch it applies at every call
         n = head_count(self.video_out, self.video_dim)
         if n == 1:
+            if self.audio_out is None:
+                return self.video_out(mod(video_seg))
             return self.video_out(mod(video_seg)), self.audio_out(mod(audio_seg))
 
         # PDD head bank: row block 0 is a full head, later blocks are offsets from it;
@@ -231,6 +238,14 @@ class FinalLayer(nn.Module):
             raise ValueError("MiniMax H3 PDD heads need the sampler's sigma schedule")
         i = int((sample_sigmas - sigma).abs().argmin())
         sigma_next = sample_sigmas[min(i + 1, sample_sigmas.shape[0] - 1)]
+        if grid is not None:
+            # the checkpoint's own grid (ComfyUI MiniMaxH3ImageModel): the nearest grid points of the step's two sigmas
+            if len(grid) != n + 1:
+                raise ValueError(f"MiniMax H3: {n} PDD heads need a grid of {n + 1} sigmas, not {len(grid)}")
+            start, stop = (min(range(n + 1), key=lambda k: abs(grid[k] - float(s))) for s in (sigma, sigma_next))
+            start = min(start, n - 1)
+            stop = max(stop, start + 1)
+            return _grid_head(self.video_out, mod(video_seg), grid, start, stop)
         start, stop = (round(float(1.0 - time_shift_sigma(s, shifts[0], 1.0)) * n) for s in (sigma, sigma_next))
         start = min(start, n - 1)
         stop = max(stop, start + 1)
@@ -265,7 +280,17 @@ def head_count(layer, out_dim):
 def _pdd_head(head, h, n, start, stop, flow_shift):
     grid = torch.linspace(1.0, 0.0, n + 1, dtype=torch.float64)
     dt = (1.0 - flow_shift * grid / (1.0 + (flow_shift - 1.0) * grid)).diff()[start:stop]
-    w = (dt / dt.sum()).to(h)
+    return _blend_heads(head, h, n, start, stop, (dt / dt.sum()).to(h))
+
+
+def _grid_head(head, h, grid, start, stop):
+    # the step from grid[start] to grid[stop] takes the dt-weighted mean of the heads it spans
+    dt = [grid[k] - grid[k + 1] for k in range(start, stop)]
+    w = torch.tensor(dt, dtype=h.dtype, device=h.device) / sum(dt)
+    return _blend_heads(head, h, len(grid) - 1, start, stop, w)
+
+
+def _blend_heads(head, h, n, start, stop, w):
     with kernels.weight_and_bias(head, h) as (weight, bias):
         rows = weight.reshape(n, -1, weight.shape[1])
         brows = bias.reshape(n, -1)

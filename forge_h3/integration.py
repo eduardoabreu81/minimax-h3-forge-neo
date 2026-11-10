@@ -14,15 +14,19 @@ from .contracts import (
     AUDIO_SHIFT,
     FPS,
     GENERATED_SOUNDTRACK,
+    H3_IMAGE,
     MIN_FRAMES,
     PH3_IMAGE,
     PH3_SHIFT,
+    STILL_VARIANTS,
+    VARIANT_LABELS,
     GenerationRequest,
     H3Error,
+    max_references,
     set_pending_error,
 )
 from .media import export_video, find_ffmpeg
-from .models import inspect_model, resolve_components
+from .models import image_grid, inspect_model, resolve_components
 
 # StableDiffusionProcessing.distilled_cfg_scale when a request does not set it
 API_DEFAULT_DISTILLED_CFG = 3.5
@@ -262,6 +266,7 @@ def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_vi
     info = select_h3(p)
     if info is None:
         return
+    p.h3_checkpoint = info.filename
     from modules import processing, shared
     is_img2img = isinstance(p, processing.StableDiffusionProcessingImg2Img)
     validate_processing(p)
@@ -271,17 +276,20 @@ def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_vi
     components = resolve_components(info.filename, module_paths(overrides.get("forge_additional_modules", shared.opts.forge_additional_modules)))
     mode = components.mode
     still = output == "Still image"
-    ph3 = components.variant == PH3_IMAGE
-    if ph3:
-        # P-H3-Image makes stills from text, or edits <Picture 1> with the other pictures as references
+    variant = components.variant
+    image_model = variant in STILL_VARIANTS
+    limit = max_references(variant)
+    if image_model:
+        # the image models make stills from text, or edit <Picture 1> with the other pictures as references
+        name = VARIANT_LABELS[variant]
         if not still:
             # as the panel does: an API call that leaves the H3 arguments out sends the default Output, Video
-            print("[MiniMax H3] P-H3-Image makes still images only: rendering a Still image")
+            print(f"[MiniMax H3] {name} makes still images only: rendering a Still image")
             output, still = "Still image", True
         if any(ref_audios or ()) or any(ref_videos or ()) or any(ref_media or ()):
-            raise H3Error("P-H3-Image takes pictures only: remove the reference audio and videos.")
+            raise H3Error(f"{name} takes pictures only: remove the reference audio and videos.")
         mode = "fl2va"
-    if still and mode == "fl2va" and (is_img2img or references.collect(p, is_img2img)):
+    if still and mode == "fl2va" and (is_img2img or references.collect(p, is_img2img, limit)):
         # editing a still conditions on the pictures as references, with any H3 checkpoint (ComfyUI's
         # MiniMaxH3ReferenceToVideo in Fizgig H3 Still's edit workflow); audio and video references stay Ref2VA's
         if ref_audios or ref_videos or any(ref_media or ()):
@@ -300,9 +308,13 @@ def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_vi
     media_videos, media_audios = references.split_media(ref_media, ffmpeg)
     ref_audios = media_audios + [path for path in ref_audios or () if path]
     ref_videos = media_videos + [path for path in ref_videos or () if path]
-    if mode == "ref2va":
+    if mode == "ref2va" and variant == H3_IMAGE:
+        # MiniMax-H3-Image encodes each picture with its short edge between 1024 and 2048, whatever the image's size
+        from .native import h3_image
+        refs = [h3_image.reference_picture(image) for image in references.collect(p, is_img2img, limit)]
+    elif mode == "ref2va":
         # the original pictures (img2img input first), each scaled to the clip's area on its own
-        refs = [references.prepare(image, p.width, p.height) for image in references.collect(p, is_img2img)]
+        refs = [references.prepare(image, p.width, p.height) for image in references.collect(p, is_img2img, limit)]
     else:
         last = keyframes.last_frame(p, p.width, p.height)
     request = GenerationRequest(width=p.width, height=p.height, frames=p.batch_size, output=output, include_audio=include_audio,
@@ -310,7 +322,7 @@ def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_vi
                                 audio_shift=audio_shift, mode=mode, references=len(refs),
                                 reference_audios=len(ref_audios), reference_videos=len(ref_videos),
                                 guide_frame=guide["frame"] if guide else None, control=bool(control),
-                                variant=components.variant)
+                                variant=variant)
     if mode == "ref2va":
         # decoded only once the request is valid; a reference video keeps at most the clip's own length
         audios = references.collect_audios(ref_audios, ffmpeg)
@@ -368,8 +380,8 @@ def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_vi
     if p.h3_soundtrack is not None:
         conditioning += f", soundtrack from the {soundtrack.lower()}"
     length = "" if still else f"{request.frames} frames at "
-    if ph3:
-        audio = "P-H3-Image"
+    if image_model:
+        audio = VARIANT_LABELS[variant]
     print(f"[MiniMax H3] {request.output.lower()}: {length}{request.width}x{request.height}, {audio}{conditioning}")
 
 
@@ -406,6 +418,8 @@ def process(p):
     p.extra_generation_params.update({"H3 Variant": "FastH3"} if getattr(p, "h3_fast", False) else {})
     if request.variant == PH3_IMAGE:
         _use_ph3_sampling(p)
+    elif request.variant == H3_IMAGE:
+        _use_h3_image_sampling(p, engine)
     p.extra_generation_params.update({"H3 Mode": "Ref2VA"} if request.mode == "ref2va" else {})
     p.extra_generation_params.update({"H3 References": request.references} if request.references else {})
     p.extra_generation_params.update({"H3 Reference videos": request.reference_videos} if request.reference_videos else {})
@@ -415,8 +429,8 @@ def process(p):
     p.extra_generation_params.update({"H3 Last frame": True} if request.last_frame else {})
 
     from .native.presets import PRESET, SHIFT
-    if request.variant == PH3_IMAGE:
-        # Forge hands this to the engine's set_shift; P-H3-Image keeps both flow shifts at 1
+    if request.variant in STILL_VARIANTS:
+        # Forge hands this to the engine's set_shift; the image models keep both flow shifts at 1
         p.distilled_cfg_scale = PH3_SHIFT
     elif getattr(shared.opts, "forge_preset", None) != PRESET:
         # outside the h3 preset the slider is another model's Distilled CFG; keep H3's own shift (and infotext)
@@ -426,7 +440,7 @@ def process(p):
         p.distilled_cfg_scale = getattr(shared.opts, f"{PRESET}_t2i_dcfg", SHIFT)
     p.extra_generation_params.update({"H3 Frames": request.frames, "H3 FPS": FPS,
                                       "H3 Audio": request.include_audio, "H3 Output": request.output})
-    if request.audio_shift != AUDIO_SHIFT and request.variant != PH3_IMAGE:
+    if request.audio_shift != AUDIO_SHIFT and request.variant not in STILL_VARIANTS:
         p.extra_generation_params["H3 Audio shift"] = request.audio_shift
     if getattr(p, "h3_upscale", None):
         p.extra_generation_params.update({"H3 Upscaler": p.h3_upscale["upscaler"], "H3 Upscale by": p.h3_upscale["scale"]})
@@ -448,6 +462,32 @@ def _use_ph3_sampling(p):
         advice.append("CFG 1")
     note = f"; it is made for {', '.join(advice)}" if advice else ""
     print(f"[MiniMax H3] P-H3-Image samples on its own sigma grid with both shifts at 1 (Schedule type is not used){note}")
+
+
+def _use_h3_image_sampling(p, engine):
+    """MiniMax-H3-Image samples on the sigma grid its PDD heads were distilled on (6 steps; another count reads the
+    same curve), whatever the Schedule type, as ComfyUI's MiniMaxH3ImageModelSampling does; the grid comes from the
+    checkpoint's metadata, MiniMax's published one when the file has none."""
+    from .native import h3_image
+    path = getattr(p, "h3_checkpoint", None)
+    grid = (image_grid(path) if path else None) or h3_image.PDD_SIGMAS
+    engine.set_image_grid(grid)
+    p.sampler_noise_scheduler_override = lambda steps: h3_image.sigmas(steps, grid)
+    p.extra_generation_params["H3 Variant"] = "MiniMax-H3-Image"
+    p.extra_generation_params["H3 Sigmas"] = "MiniMax-H3-Image grid"
+    steps = len(grid) - 1
+    advice = []
+    if getattr(p, "steps", steps) != steps:
+        advice.append(f"{steps} steps")
+    if getattr(p, "sampler_name", "Euler") != "Euler":
+        advice.append("the Euler sampler")
+    if getattr(p, "cfg_scale", 1.0) != 1.0:
+        advice.append("CFG 1 (it is distilled without guidance)")
+    note = f"; it is made for {', '.join(advice)}" if advice else ""
+    print(f"[MiniMax H3] MiniMax-H3-Image samples on its own sigma grid with no shift (Schedule type is not used){note}")
+    size = h3_image.size_advice(p.width, p.height)
+    if size:
+        print(f"[MiniMax H3] {size}")
 
 
 def before_sampling(p, noise):

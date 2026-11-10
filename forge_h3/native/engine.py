@@ -18,12 +18,22 @@ from backend.patcher.clip import CLIP
 from backend.patcher.unet import UnetPatcher
 from backend.patcher.vae import VAE
 
-from ..contracts import FPS, H3, PH3_IMAGE, H3Error, raise_pending_error
-from . import dit, fun_control, ph3
+from ..contracts import (
+    FPS,
+    H3,
+    H3_IMAGE,
+    PH3_IMAGE,
+    STILL_VARIANTS,
+    H3Error,
+    raise_pending_error,
+)
+from . import dit, fun_control, h3_image, ph3
 from .layout import FRAME_RESCALE, prompt_memory
 from .model import AUDIO_SHIFT, VIDEO_SHIFT, MiniMaxH3
 from .streams import Generation, stream_shapes
-from .text_engine import MiniMaxH3TextEngine, PH3ImageTextEngine
+from .text_engine import H3ImageTextEngine, MiniMaxH3TextEngine, PH3ImageTextEngine
+
+TEXT_ENGINES = {H3: MiniMaxH3TextEngine, PH3_IMAGE: PH3ImageTextEngine, H3_IMAGE: H3ImageTextEngine}
 
 
 def encode_memory(shape, dtype) -> int:
@@ -46,10 +56,28 @@ def _video_vae_dtype() -> torch.dtype:
     return torch.float32
 
 
+def component_variant(components) -> str:
+    """The variant the loaded components make, refusing a mix: MiniMax-H3-Image's DiT has no audio stream and takes H3's
+    text encoder with its image VAE; P-H3-Image's text encoder has a text connector and its VAE no audio part."""
+    image_dit = getattr(components["transformer"], "audio_patch_proj", True) is None
+    connector = getattr(components["text_encoder"], "text_connector", None) is not None
+    pair = components["vae"]
+    image_vae = isinstance(pair.video, h3_image.H3ImageVAE)
+    if image_dit or image_vae:
+        if not (image_dit and image_vae) or connector or pair.audio is not None:
+            raise H3Error("MiniMax-H3-Image components are mixed: it takes its own diffusion model and image VAE with "
+                          "H3's text encoder, and no audio VAE.")
+        return H3_IMAGE
+    if connector != (pair.audio is None):
+        raise H3Error("P-H3-Image and MiniMax H3 components are mixed: P-H3-Image takes its own text encoder and VAE, "
+                      "H3 its own text encoder, video VAE and audio VAE.")
+    return PH3_IMAGE if connector else H3
+
+
 class MiniMaxH3Engine(ForgeDiffusionEngine):
     matched_guesses = [MiniMaxH3]
-    # MiniMax H3, or P-H3-Image (contracts.PH3_IMAGE): the same DiT with its own text encoder and single-frame VAE, told
-    # apart by the loaded text encoder
+    # MiniMax H3; P-H3-Image (contracts.PH3_IMAGE), the same DiT with its own text encoder and single-frame VAE, told
+    # apart by the loaded text encoder; or MiniMax-H3-Image (contracts.H3_IMAGE), told apart by its DiT without audio
     variant = H3
 
     def __init__(self, estimated_config, huggingface_components):
@@ -59,10 +87,7 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
                     tokenizer_dict={"qwen3vl_32b": huggingface_components["tokenizer"]})
 
         pair = huggingface_components["vae"]
-        self.variant = PH3_IMAGE if getattr(huggingface_components["text_encoder"], "text_connector", None) is not None else H3
-        if (self.variant == PH3_IMAGE) != (pair.audio is None):
-            raise H3Error("P-H3-Image and MiniMax H3 components are mixed: P-H3-Image takes its own text encoder and VAE, "
-                          "H3 its own text encoder, video VAE and audio VAE.")
+        self.variant = component_variant(huggingface_components)
         vae = VAE(model=pair.video, dtype=_video_vae_dtype(), is_wan=True)
         vae.latent_channels = 24
         # P-H3-Image has no audio VAE; its stills never decode audio
@@ -71,9 +96,8 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         unet = UnetPatcher.from_model(model=huggingface_components["transformer"], diffusers_scheduler=None,
                                       k_predictor=self._get_predictor(), config=estimated_config)
 
-        text_engine = PH3ImageTextEngine if self.variant == PH3_IMAGE else MiniMaxH3TextEngine
-        self.text_processing_engine_h3 = text_engine(text_encoder=clip.cond_stage_model.qwen3vl_32b,
-                                                     tokenizer=clip.tokenizer.qwen3vl_32b)
+        self.text_processing_engine_h3 = TEXT_ENGINES[self.variant](text_encoder=clip.cond_stage_model.qwen3vl_32b,
+                                                                    tokenizer=clip.tokenizer.qwen3vl_32b)
 
         self.forge_objects = ForgeObjects(unet=unet, clip=clip, vae=vae, clipvision=None)
         self.forge_objects_original = self.forge_objects.shallow_copy()
@@ -84,7 +108,7 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         self.use_shift = True
         self.video_shift = VIDEO_SHIFT
         self.audio_shift = AUDIO_SHIFT
-        if self.variant == PH3_IMAGE:
+        if self.variant in STILL_VARIANTS:
             self.video_shift = self.audio_shift = ph3.SHIFT
         self.generation: Generation | None = None
 
@@ -157,8 +181,8 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
     def set_shift(self, shift, *args, **kwargs):
         # Forge Neo after d70373e also passes the size (width, height); H3's shift does not depend on it
         shift = float(shift) if shift and shift > 0 else VIDEO_SHIFT
-        if self.variant == PH3_IMAGE:
-            # P-H3-Image samples with both flow shifts at 1
+        if self.variant in STILL_VARIANTS:
+            # the image models sample with both flow shifts at 1
             shift = ph3.SHIFT
         super().set_shift(shift)
         self.video_shift = shift
@@ -166,8 +190,13 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
 
     def set_audio_shift(self, shift: float) -> None:
         """The audio stream's flow shift (ComfyUI's ModelSamplingMiniMaxH3 shift_audio); set for every H3 generation."""
-        self.audio_shift = ph3.SHIFT if self.variant == PH3_IMAGE else float(shift)
+        self.audio_shift = ph3.SHIFT if self.variant in STILL_VARIANTS else float(shift)
         self.forge_objects.unet.model.diffusion_model.sigma_shift_audio = self.audio_shift
+
+    def set_image_grid(self, grid) -> None:
+        """MiniMax-H3-Image: the sigma grid the selected file declares for its PDD heads (integration.py reads it from
+        the file header, which Forge's loader does not pass on)."""
+        self.forge_objects.unet.model.diffusion_model.pdd_sigmas = tuple(float(s) for s in grid)
 
     def pdd_heads(self) -> int:
         """The PDD heads this generation's LoRAs give the DiT's output projection (alibaba-pai's Acc LoRAs in Kijai's
@@ -181,7 +210,7 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
 
     def prepare(self, frames: int, width: int, height: int, seed: int) -> tuple[int, ...]:
         """Start a generation: remember its shapes; returns the shape of the packed latent (without the batch)."""
-        shapes = stream_shapes(frames, width, height)
+        shapes = stream_shapes(frames, width, height, audio=self.variant != H3_IMAGE)
         indices = [index for index, image in ((0, self.first_frame), (frames - 1, self.last_frame)) if image is not None]
         keyframes = [{"resolved_frame_index": index, "latent": latent}
                      for index, latent in zip(indices, self._encode_keyframes(width, height))]
@@ -307,6 +336,9 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         if self.variant == PH3_IMAGE:
             # P-H3-Image's text encoder sees the pictures at 1 MP at most; the VAE takes them at the image's area
             images = [ph3.vision_picture(image) for image in images]
+        elif self.variant == H3_IMAGE:
+            # MiniMax-H3-Image's sees them at a 1024 short edge; the VAE takes them within a 1024-2048 short edge
+            images = [h3_image.vision_picture(image) for image in images]
         # room for the activations too: a reference video's vision tokens did not fit next to the resident DiT
         pictures = [tuple(image.shape[-3:-1]) for image in images]
         blocks = [tuple(video["frames"].shape[1:3]) for video in videos for _ in range(0, video["frames"].shape[0], 2)]

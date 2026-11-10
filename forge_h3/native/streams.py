@@ -55,8 +55,9 @@ def preview_frame(packed: torch.Tensor, shapes: StreamShapes | None) -> torch.Te
     return video[:, :, video.shape[2] // 2]
 
 
-def stream_shapes(frames: int, width: int, height: int) -> StreamShapes:
-    audio_t = round(frames / FPS * AUDIO_LATENTS_PER_SECOND)
+def stream_shapes(frames: int, width: int, height: int, audio: bool = True) -> StreamShapes:
+    """audio=False for MiniMax-H3-Image, which has no audio stream: its audio latent is empty."""
+    audio_t = round(frames / FPS * AUDIO_LATENTS_PER_SECOND) if audio else 0
     return StreamShapes(video=(1, 24, latent_frames(frames), height // SPATIAL, width // SPATIAL), audio=(1, 32, 2, audio_t))
 
 

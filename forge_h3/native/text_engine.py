@@ -21,6 +21,8 @@ VISION_END = 151653
 # P-H3-Image: with pictures a short instruction edits <Picture 1>; one that names the picture to edit, or an edit brief
 # from its prompt upsampler, is encoded as it is (ComfyUI PH3ImageConditioning)
 PH3_EDIT = "Edit <Picture 1>. {}"
+# MiniMax-H3-Image labels the pictures before the prompt "Picture 1: " (ComfyUI MiniMaxH3ImageConditioning)
+H3_IMAGE_PICTURE_LABEL = "Picture {}: "
 PH3_EDIT_VERBATIM = re.compile(r"\s*(Edit <Picture \d+>|subject_definitions:)")
 
 
@@ -45,6 +47,9 @@ def vision_spans(image_spans) -> list[tuple[int, int]]:
 
 
 class MiniMaxH3TextEngine:
+    # the label each picture gets before its vision block
+    picture_label = "<Picture {}>: "
+
     def __init__(self, text_encoder, tokenizer):
         self.text_encoder = VisionSpanClipModel(text_encoder, layer="last", special_tokens={"pad": PAD}, layer_norm_hidden_state=False,
                                                 enable_attention_masks=False, return_attention_masks=False)
@@ -95,7 +100,7 @@ class MiniMaxH3TextEngine:
             entries.extend([(VISION_START, 1.0), (embed, 1.0), (VISION_END, 1.0)])
 
         for i, image in enumerate(images):
-            add_text(f"<Picture {i + 1}>: ")
+            add_text(self.picture_label.format(i + 1))
             add_vision(image)
         # Ref2VA audio never enters Qwen: only its label
         sounds = 0
@@ -126,3 +131,10 @@ class PH3ImageTextEngine(MiniMaxH3TextEngine):
         if images:
             text = edit_prompt(text)
         return super().tokens(text, images, audios, videos)
+
+
+class H3ImageTextEngine(MiniMaxH3TextEngine):
+    """MiniMax-H3-Image: H3's text encoder and presentation, with the pictures labelled "Picture i: "; the prompt is
+    used as it is and names them <Picture 1>, <Picture 2>, ..."""
+
+    picture_label = H3_IMAGE_PICTURE_LABEL

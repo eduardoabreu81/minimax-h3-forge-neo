@@ -474,7 +474,7 @@ class PresetTests(unittest.TestCase):
     def test_both_presets_and_only_their_options(self):
         self.presets.register()
         arch = self.forge.PresetArch
-        self.assertEqual([m.name for m in arch], ["sd", "flux", "h3", "ph3"])
+        self.assertEqual([m.name for m in arch], ["sd", "flux", "h3", "ph3", "h3i"])
         h3, ph3 = arch["h3"], arch["ph3"]
         self.assertEqual((self.forge.SAMPLERS[h3], self.forge.STEPS[h3], self.forge.SHIFT[h3]), ("Res Multistep", 20, 12.0))
         self.assertEqual((self.forge.SAMPLERS[ph3], self.forge.STEPS[ph3], self.forge.CFG[ph3]), ("Euler", 8, 1.0))
@@ -493,7 +493,7 @@ class PresetTests(unittest.TestCase):
         # registering again adds nothing twice
         count = len(self.added)
         self.presets.register()
-        self.assertEqual(([m.name for m in arch], len(self.added)), (["sd", "flux", "h3", "ph3"], count))
+        self.assertEqual(([m.name for m in arch], len(self.added)), (["sd", "flux", "h3", "ph3", "h3i"], count))
 
 
 @unittest.skipUnless(importlib.util.find_spec("gradio"), "Gradio is optional for CPU tests")

@@ -17,14 +17,20 @@ MIN_AUDIO_SHIFT = 0.01
 MAX_AUDIO_SHIFT = 100.0
 # FL2VA (text, first and last frame) and Ref2VA (reference pictures) checkpoints
 MODES = ("fl2va", "ref2va")
-# MiniMax H3, and PrunaAI's P-H3-Image: an image-only derivative with the same DiT (or H3's with its LoRA), a Qwen3-VL 4B
-# text encoder and a single-frame VAE; it makes still images, from text or edited from pictures
+# MiniMax H3; PrunaAI's P-H3-Image, an image-only derivative with the same DiT (or H3's with its LoRA), a Qwen3-VL 4B
+# text encoder and a single-frame VAE; and MiniMax's own MiniMax-H3-Image, H3's DiT without the audio stream, with H3's
+# text encoder and an image VAE. Both image models make still images, from text or edited from pictures
 H3 = "h3"
 PH3_IMAGE = "p-h3-image"
-VARIANTS = (H3, PH3_IMAGE)
-# P-H3-Image samples with both flow shifts at 1
+H3_IMAGE = "h3-image"
+VARIANTS = (H3, PH3_IMAGE, H3_IMAGE)
+STILL_VARIANTS = (PH3_IMAGE, H3_IMAGE)
+VARIANT_LABELS = {H3: "MiniMax H3", PH3_IMAGE: "P-H3-Image", H3_IMAGE: "MiniMax-H3-Image"}
+# the image models sample with both flow shifts at 1
 PH3_SHIFT = 1.0
 MAX_REFERENCES = 9
+# MiniMax-H3-Image edits with up to 16 reference pictures (MiniMax-H3-Image README)
+MAX_IMAGE_REFERENCES = 16
 # Ref2VA reference audio (MiniMax-H3 README): up to 3 clips, each 2-15 seconds, 15 seconds in all
 MAX_REF_AUDIOS = 3
 MIN_REF_AUDIO_SECONDS = 2.0
@@ -38,6 +44,10 @@ MAX_REF_FILES = 12
 # new audio, which a guide or a reference video only steers
 GENERATED_SOUNDTRACK = "Generated"
 SOUNDTRACKS = (GENERATED_SOUNDTRACK, "Guide", "Control video", "Reference video 1")
+
+
+def max_references(variant=H3):
+    return MAX_IMAGE_REFERENCES if variant == H3_IMAGE else MAX_REFERENCES
 
 
 class H3Error(RuntimeError):
@@ -104,8 +114,8 @@ class GenerationRequest:
             raise H3Error("H3 output must be Video or Still image.")
         if self.variant not in VARIANTS:
             raise H3Error(f"Unknown H3 variant {self.variant!r}.")
-        if self.variant == PH3_IMAGE:
-            self._check_ph3_image()
+        if self.variant in STILL_VARIANTS:
+            self._check_still_variant()
         if self.mode not in MODES:
             raise H3Error(f"Unknown H3 mode {self.mode!r}.")
         if self.mode == "ref2va" and self.keyframes:
@@ -118,7 +128,9 @@ class GenerationRequest:
         if self.mode == "fl2va" and self.reference_videos:
             raise H3Error("Reference videos need a Ref2VA checkpoint.")
         self.references = integer(self.references, "References")
-        if not 0 <= self.references <= MAX_REFERENCES:
+        if not 0 <= self.references <= max_references(self.variant):
+            if self.variant == H3_IMAGE:
+                raise H3Error(f"MiniMax-H3-Image takes up to {MAX_IMAGE_REFERENCES} reference pictures.")
             raise H3Error(f"H3 Ref2VA takes up to {MAX_REFERENCES} reference pictures.")
         self.reference_audios = integer(self.reference_audios, "Reference audios")
         if not 0 <= self.reference_audios <= MAX_REF_AUDIOS:
@@ -127,7 +139,8 @@ class GenerationRequest:
         if not 0 <= self.reference_videos <= MAX_REF_VIDEOS:
             raise H3Error(f"H3 Ref2VA takes up to {MAX_REF_VIDEOS} reference videos.")
         files = self.references + self.reference_audios + self.reference_videos
-        if files > MAX_REF_FILES:
+        # MiniMax-H3-Image takes pictures only, up to its own 16
+        if files > max(MAX_REF_FILES, max_references(self.variant)):
             raise H3Error(f"H3 Ref2VA takes up to {MAX_REF_FILES} reference files in all; {files} were given.")
         if self.output == "Still image" and self.keyframes:
             raise H3Error("H3 Still image takes reference pictures, not a first or last frame.")
@@ -154,15 +167,16 @@ class GenerationRequest:
                 raise H3Error(f"H3 Guide frame {self.guide_frame} is outside the clip's {self.frames} frames "
                               f"(0 to {self.frames - 1}, or -1 to -{self.frames} from the end).")
 
-    def _check_ph3_image(self):
+    def _check_still_variant(self):
+        name = VARIANT_LABELS[self.variant]
         if self.output != "Still image":
-            raise H3Error("P-H3-Image makes still images only: set the H3 Output to Still image.")
+            raise H3Error(f"{name} makes still images only: set the H3 Output to Still image.")
         if self.reference_audios or self.reference_videos:
-            raise H3Error("P-H3-Image takes pictures only: remove the reference audio and videos.")
+            raise H3Error(f"{name} takes pictures only: remove the reference audio and videos.")
         if self.guide_frame is not None:
-            raise H3Error("P-H3-Image takes no H3 Guide: clear the guide video and audio.")
+            raise H3Error(f"{name} takes no H3 Guide: clear the guide video and audio.")
         if self.control:
-            raise H3Error("P-H3-Image takes no Fun ControlNet: clear the H3 Control inputs.")
+            raise H3Error(f"{name} takes no Fun ControlNet: clear the H3 Control inputs.")
         self.audio_shift = PH3_SHIFT
 
     @property

@@ -1,7 +1,8 @@
 """Packed-sequence geometry of the MiniMax H3 DiT: patching, positions and the segment table.
 
 Ported from ComfyUI comfy/ldm/minimax/model.py. The packed sequence is
-[text | cond rows | audio | video] for t2va/fl2va and [text | reference blocks | audio | video] for ref2va.
+[text | cond rows | audio | video] for t2va/fl2va and [text | reference blocks | audio | video] for ref2va;
+MiniMax-H3-Image has no audio stream: [text | reference images | image].
 """
 
 import math
@@ -130,8 +131,9 @@ class _Builder:
         g = torch.zeros(text_len, 3, dtype=torch.float64)
         g[:, 0] = torch.arange(text_len, dtype=torch.float64)
         self.pos = [g]
+        # the empty start keeps torch.cat working for a sequence without audio rows (MiniMax-H3-Image)
         self.img_pos, self.img_update = [], []
-        self.audio_pos, self.audio_update = [], []
+        self.audio_pos, self.audio_update = [torch.zeros(0, dtype=torch.long)], [torch.zeros(0, dtype=torch.bool)]
         self.row = text_len
 
     def add(self, kind, positions, stream, update):
@@ -177,8 +179,9 @@ class PackedLayout:
         for blk in refs or ():
             ref_cursor = self._add_ref(b, blk, ref_cursor, target_audio_w)
 
-        # target audio then target video, always the last two segments
-        b.add("audio", _audio_grid(cursor, audio_t, *target_audio_w), "audio", True)
+        # target audio (none for the image model) then target video, always last
+        if audio_t:
+            b.add("audio", _audio_grid(cursor, audio_t, *target_audio_w), "audio", True)
         b.add("video", _video_grid(latent_t, frame, cursor), "image", True)
 
         self.seq_len = b.row

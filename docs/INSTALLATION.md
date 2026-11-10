@@ -90,6 +90,19 @@ PrunaAI's P-H3-Image is an image-only derivative of H3: the same DiT, a Qwen3-VL
 - **Not included:** the prompt upsampler (Qwen3.5-9B). The int8 and w4a8 text encoders store the token embedding as ConvRot INT8; it is turned back into a plain bf16 table at load (about 0.8 GB).
 - **Status:** checked on the CPU only - the recognition against the headers of all eight published files, the text encoder and VAE layouts against them (the text encoder also built with Forge Neo's own Qwen3-VL code), the text connector, the embedding and the single-frame VAE against ComfyUI's code, and a still through Forge's order with toy models. Not yet run with the real models on a GPU.
 
+## MiniMax-H3-Image (experimental)
+
+MiniMaxAI's MiniMax-H3-Image is the image model of the H3 family: H3's DiT without the audio stream, H3's own Qwen3-VL 32B text encoder (unchanged, layer-50 states), and an image VAE with H3's encoder and a 2D ViT decoder (24 layers, 16 heads, 2D rope on half of each head). The DiT carries 6 output heads (PDD), one per interval of its own sigma grid.
+
+- **Files:** from [Comfy-Org/MiniMax-H3-Image](https://huggingface.co/Comfy-Org/MiniMax-H3-Image/tree/main): `minimax_h3_image_pruned_*` (bf16, int8_convrot or w4a8), H3's `qwen3vl_32b_minimax_h3_int8_convrot` (the same file as in Comfy-Org/MiniMax-H3) and `minimax_h3_image_vae_fp16`. MiniMaxAI's original `vae/diffusion_pytorch_model.safetensors` has the same tensors and works too. The NVFP4 text encoder is refused, as for H3. The original sharded `transformer/` folder is not a single file and cannot be selected.
+- **The h3i UI preset:** Euler, 6 steps, CFG 1, 2048x2048, no Shift slider. Like **ph3**, it keeps its own checkpoint and VAE / Text Encoder selection.
+- **Recognition:** the checkpoint has no audio stream (no `audio_patch_proj`), and the VAE's decoder is 1024 wide (P-H3-Image's is 2048). The DiT needs the image VAE and H3's text encoder; H3's video or audio VAE, or P-H3-Image's text encoder or VAE, are refused with a message saying what to deselect. The Components section shows **Mode: MiniMax-H3-Image**.
+- **Output:** Still image only, as for P-H3-Image; MiniMaxAI/MiniMax-H3-Image and Comfy-Org/MiniMax-H3-Image (configs, README and file headers, read on 10 November 2026) for MiniMax-H3-Image. Editing takes the img2img input image as `<Picture 1>` and the ImageStitch gallery for the next ones, 16 in all. The pictures come before the prompt labelled `Picture 1: `, `Picture 2: ` (ComfyUI's `MiniMaxH3ImageConditioning`); the prompt is used as written and names them `<Picture 1>`, `<Picture 2>`. The text encoder sees each picture at a 1024 short edge, the VAE within a 1024-2048 short edge, whatever the image's size. Guide, Fun ControlNet, reference audio and videos are refused.
+- **Sampling:** the PDD grid the checkpoint declares in its metadata (`pdd_sigmas`; MiniMax's published `1.0 ... 0.232009, 0.0` when a file has none), read off the same curve for another step count, whatever the Schedule type. Each step blends the heads of the grid intervals it spans. No flow shift, no CFG (MiniMax's servers reject anything but 6 steps and guidance 1). The infotext says `H3 Variant: MiniMax-H3-Image`.
+- **Sizes:** MiniMax gives a working range of about 4 to 20 MP, best around 16 MP (4096x4096, 4736x3552, 5472x3072, 6272x2688). Below 4 MP the console says so. The VAE decodes in 256-pixel tiles, as MiniMax's config does.
+- **Not included:** the prompt expanders (MiniMax-H3-Image-PE, or the Qwen3.5-9B Comfy-Org suggests). ComfyUI's int8 attention choice stored in the int8 checkpoint (`comfy_attention.config`) is dropped at load; Forge's attention runs.
+- **Status:** checked on the CPU only - the recognition and the layouts against the headers of the three published checkpoints and both VAEs, the PDD head blend and the image VAE against ComfyUI's code (revision `ede4e5f`), and a still and an edit through Forge's order with toy models. Not yet run with the real models on a GPU.
+
 ## Troubleshooting
 
 | Symptom | What to do |
@@ -98,6 +111,7 @@ PrunaAI's P-H3-Image is an image-only derivative of H3: the same DiT, a Qwen3-VL
 | `Select the H3 text encoder / video VAE / audio VAE...` | Select all three components under **VAE / Text Encoder**, and only one of each. |
 | `Unrecognized H3 component` | A selected module is not an H3 file. Deselect it. |
 | `P-H3-Image and MiniMax H3 components are mixed` | Select either the P-H3-Image text encoder and VAE, or H3's text encoder, video VAE and audio VAE. |
+| `MiniMax-H3-Image does not take the ...` / `needs its own image VAE` | With a `minimax_h3_image` checkpoint select only H3's text encoder and `minimax_h3_image_vae`. |
 | `H3 width and height must be multiples of 32` / `H3 Frames must follow 17n + 5` | Use multiples of 32 for the size; the Frames slider moves in steps of 17 from 5 to 362. |
 | `The img2img input image did not reach H3` | Set **Settings → VAE → VAE for Encoding** to **Full** and check the console for an earlier error. |
 | The process is killed while loading H3 or adding a LoRA | Not enough system RAM. Close other programs, restart Forge before changing the text encoder, and for long clips with a LoRA set **Diffusion in Low Bits** to **Automatic (fp16 LoRA)**. |
@@ -113,11 +127,12 @@ python -m unittest discover -s tests -v
 python -m ruff check .
 ```
 
-The native backend tests need Torch and comfy-kitchen; Gradio is optional. They use the real tensor names and shapes of nine published H3 files and eight P-H3-Image files (`tests/fixtures/h3_headers.json.gz`, `tests/fixtures/ph3_headers.json.gz`, no weights) and stand-ins for Forge Neo (`tests/forge_stubs.py`). They do not replace a GPU run.
+The native backend tests need Torch and comfy-kitchen; Gradio is optional. They use the real tensor names and shapes of nine published H3 files, eight P-H3-Image files and five MiniMax-H3-Image files (`tests/fixtures/h3_headers.json.gz`, `tests/fixtures/ph3_headers.json.gz`, `tests/fixtures/h3image_headers.json.gz`, no weights) and stand-ins for Forge Neo (`tests/forge_stubs.py`). They do not replace a GPU run.
 
 ## Source provenance
 
 - ComfyUI `e9027f2`: `comfy/ldm/minimax/`, `comfy/text_encoders/minimax.py`, `comfy/model_base.py` (`MiniMaxH3`), `comfy_extras/nodes_minimax_h3.py`.
 - ComfyUI `0decb39` for P-H3-Image: `comfy/text_encoders/minimax.py` (`PH3ImageQwen3VL`, `TextConnector`), `comfy/ldm/minimax/vae.py` (`PH3ImageVAE`), `comfy/sd.py`, `comfy_extras/nodes_minimax_h3.py` (`PH3ImageConditioning`).
+- ComfyUI `ede4e5f` for MiniMax-H3-Image: `comfy/ldm/minimax/model.py` (`MiniMaxH3ImageModel`, the PDD grid), `comfy/ldm/minimax/sampling.py`, `comfy/ldm/minimax/vae.py` (`MiniMaxH3ImageVAE`), `comfy/text_encoders/minimax.py` (`picture_label`), `comfy_extras/nodes_minimax_h3.py` (`MiniMaxH3ImageConditioning`).
 - Forge Neo `97b26fb` (GPU tests) and `d70373e` (source reading).
 - Comfy-Org/MiniMax-H3 `e5eb578` and MiniMaxAI/MiniMax-H3 `42ed227` for the model files; PrunaAI/P-H3-Image and P-H3-Image-Comfy (configs, workflows and file headers, read on 8 November 2026) for P-H3-Image.
