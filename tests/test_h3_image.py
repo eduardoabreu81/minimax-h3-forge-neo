@@ -120,6 +120,20 @@ class ComponentTests(Files, unittest.TestCase):
                 with self.assertRaisesRegex(H3Error, message):
                     resolve_components(checkpoint_path, parts)
 
+    def test_the_prompt_expander_is_named_as_such(self):
+        # Comfy-Org's Qwen3.5 9B for ComfyUI's Generate Text node, taken for the text encoder in issue #8
+        dit, vae = self.file("minimax_h3_image_pruned_int8_convrot"), self.file("minimax_h3_image_vae_fp16")
+        expander = self.file("qwen3.5_9b_w4a8_gptq")
+        self.assertIsNone(inspect_model(expander))
+        with self.assertRaisesRegex(H3Error, "qwen3.5_9b_w4a8_gptq.safetensors is a prompt expander.*qwen3vl_32b_minimax_h3"):
+            resolve_components(dit, [expander, vae])
+        # another unknown file gets the list the variant needs
+        other = checkpoint(self.root / "other.safetensors", {"x.weight": ("F16", [4, 4])})
+        with self.assertRaisesRegex(H3Error, "Select only H3's text encoder and the MiniMax-H3-Image VAE"):
+            resolve_components(dit, [other])
+        with self.assertRaisesRegex(H3Error, "or the P-H3-Image text encoder and VAE"):
+            resolve_components(self.file("minimax_h3_fl2va_pruned_int8_convrot"), [other])
+
     def test_h3_and_ph3_resolve_as_before(self):
         h3 = resolve_components(self.file("minimax_h3_fl2va_pruned_int8_convrot"),
                                 [self.file(H3_TE), self.file("minimax_h3_video_vae_fp16"), self.file("minimax_h3_audio_vae_fp32")])

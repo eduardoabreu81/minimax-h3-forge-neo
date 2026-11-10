@@ -311,6 +311,16 @@ class Components:
         return "ref2va" if "ref2va" in self.dit.path.name.lower() else "fl2va"
 
 
+def is_prompt_expander(path) -> bool:
+    """A whole language model with its output head, such as the Qwen3.5 9B Comfy-Org suggests for prompt expansion with
+    MiniMax-H3-Image; the H3 and P-H3-Image text encoders stop at a hidden layer and have no lm_head."""
+    try:
+        keys = set(read_header(path)) - {"__metadata__"}
+    except H3Error:
+        return False
+    return any(k.endswith("lm_head.weight") for k in keys) and any(k.endswith("embed_tokens.weight") for k in keys)
+
+
 def resolve_components(dit_path, module_paths):
     """The H3 checkpoint and the three modules selected under VAE / Text Encoder, checked before Forge loads them."""
     dit = inspect_model(dit_path)
@@ -320,7 +330,13 @@ def resolve_components(dit_path, module_paths):
     for path in dict.fromkeys(str(Path(p).resolve()) for p in module_paths):
         item = inspect_model(path)
         if item is None or item.role == "dit":
-            raise H3Error(f"Unrecognized H3 component: {Path(path).name}. Select only the H3 text encoder and both VAEs.")
+            if item is None and is_prompt_expander(path):
+                raise H3Error(f"{Path(path).name} is a prompt expander (a language model that writes prompts, as "
+                              "ComfyUI's Generate Text node uses it), not a text encoder: deselect it and select H3's "
+                              "qwen3vl_32b_minimax_h3 text encoder.")
+            wanted = ("H3's text encoder and the MiniMax-H3-Image VAE" if dit.variant == "image" else
+                      "the H3 text encoder, video VAE and audio VAE, or the P-H3-Image text encoder and VAE")
+            raise H3Error(f"Unrecognized H3 component: {Path(path).name}. Select only {wanted}.")
         if item.role in resolved:
             raise H3Error(f"More than one H3 {ROLE_LABELS[item.role]} is selected.")
         resolved[item.role] = item

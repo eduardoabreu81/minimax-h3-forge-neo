@@ -18,6 +18,7 @@ from backend.state_dict import load_state_dict
 from huggingface_guess import detection, model_list
 from transformers.modeling_utils import no_init_weights
 
+from ..contracts import raise_pending_error
 from . import filebacked, gguf_vision, h3_image, model, ph3, release, taeh3, vae
 from .engine import MiniMaxH3Engine
 from .islands import fp32_islands, restore_fp32
@@ -134,6 +135,7 @@ def _load_vae(state_dict: dict) -> vae.AutoencoderMiniMaxH3:
         return _load_image_vae(state_dict, "P-H3-Image", ph3.PH3ImageVAE, ph3.AutoencoderPH3Image)
     if not isinstance(state_dict, dict) or not any(k.startswith("video.") for k in state_dict) \
             or not any(k.startswith("audio.") for k in state_dict):
+        raise_pending_error()
         raise ValueError(vae.MISSING_VAE)
     layers = vae.video_layers(state_dict)
     with no_init_weights():
@@ -186,6 +188,8 @@ def _hook_components() -> None:
             return dit
         if cls_name == "Qwen3VLModel":
             if not isinstance(state_dict, dict) or len(state_dict) <= 16:
+                # the selection check before Forge loads (integration.before_process) says which file is wrong
+                raise_pending_error()
                 raise ValueError(MISSING_TE)
             if ph3.is_text_encoder(state_dict):
                 # P-H3-Image's Qwen3-VL 4B, built from its own config instead of H3's 32B one
