@@ -21,7 +21,7 @@ from transformers.modeling_utils import no_init_weights
 from ..contracts import raise_pending_error
 from . import filebacked, gguf_vision, h3_image, model, ph3, release, taeh3, vae
 from .engine import MiniMaxH3Engine
-from .islands import fp32_islands, restore_fp32
+from .islands import floating_dtype, fp32_islands, restore_fp32
 from .text_encoder import PH3ImageQwen3VL, Qwen3VL32B
 from .transformer import MiniMaxH3Model
 
@@ -50,6 +50,23 @@ def _swapped(module, name: str, value):
         yield
     finally:
         setattr(module, name, original)
+
+
+TEXT_ENCODER_DTYPE_FLAGS = ("fp32_text_enc", "bf16_text_enc", "fp16_text_enc", "fp8_e4m3fn_text_enc",
+                            "fp8_e5m2_text_enc")
+
+
+@contextlib.contextmanager
+def _file_dtype_kept(state_dict: dict):
+    """P-H3-Image's bf16 text encoder file stays bf16, as ComfyUI runs it: Forge casts a plain text encoder to fp16 by
+    default, a 9 GB copy in system RAM that also drops the file-backed views (ported from aoleg's fork, a324b67). A
+    text encoder dtype flag on Forge's command line still wins."""
+    from backend.args import args
+    if floating_dtype(state_dict) != torch.bfloat16 or any(getattr(args, flag, False) for flag in TEXT_ENCODER_DTYPE_FLAGS):
+        yield
+        return
+    with _swapped(memory_management, "text_encoder_dtype", lambda device=None: torch.bfloat16):
+        yield
 
 
 def begin_sampling() -> None:
@@ -194,7 +211,7 @@ def _hook_components() -> None:
             if ph3.is_text_encoder(state_dict):
                 # P-H3-Image's Qwen3-VL 4B, built from its own config instead of H3's 32B one
                 storages = filebacked.file_storages(state_dict)
-                with _swapped(llama, "Qwen3VL", PH3ImageQwen3VL):
+                with _swapped(llama, "Qwen3VL", PH3ImageQwen3VL), _file_dtype_kept(state_dict):
                     text_encoder = original(guess, component_name, lib_name, cls_name, ph3.CONFIG_DIR, state_dict)
                 _file_backed("P-H3-Image text encoder", text_encoder, storages)
                 return text_encoder

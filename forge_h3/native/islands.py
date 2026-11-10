@@ -25,6 +25,18 @@ def fp32_islands(state_dict: dict, curve: bool) -> dict:
     return islands
 
 
+def floating_dtype(state_dict: dict) -> torch.dtype | None:
+    """The dtype most of a file's floating weights are stored in (bf16 for PrunaAI's P-H3-Image text encoder), None for
+    a quantized or GGUF file, whose plain tensors are only scales and norms (ported from aoleg's fork, a324b67)."""
+    if any(k.endswith(".comfy_quant") for k in state_dict) or any(hasattr(v, "gguf_cls") for v in state_dict.values()):
+        return None
+    counts: dict[torch.dtype, int] = {}
+    for v in state_dict.values():
+        if isinstance(v, torch.Tensor) and v.is_floating_point():
+            counts[v.dtype] = counts.get(v.dtype, 0) + v.numel()
+    return max(counts, key=counts.get) if counts else None
+
+
 def restore_fp32(dit: nn.Module, islands: dict) -> None:
     # the loader stores every plain layer at one dtype; put ComfyUI's fp32 layers back at full precision. detach()
     # unwraps Forge's ParameterGGUF (F32/F16 GGUF tensors), whose own to() keeps the wrapper nn.Parameter refuses

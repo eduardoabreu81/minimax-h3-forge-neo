@@ -42,6 +42,48 @@ def encode_memory(shape, dtype) -> int:
     return 6000 * shape[-2] * shape[-1] * memory_management.dtype_size(dtype)
 
 
+# A still's sampling memory, ported from aoleg's fork (aoleg/pruna-P-H3-Image-forge-neo 8d405a3). Forge sizes the
+# headroom from the packed latent, which is small for a single frame, and left too little next to a resident text
+# encoder (an out-of-memory error and a driver crash with P-H3-Image, #8). The DiT's working memory follows its
+# sequence instead: about 1 MB per token measured on a 32 GB card, with the allocator's slack.
+STILL_BYTES_PER_TOKEN = 1536 * 1024
+STILL_FIXED_BYTES = 1024 * 1024 * 1024
+# the prompt's share of the sequence is not known when the reservation is made; a long edit brief is a few hundred
+STILL_TEXT_TOKENS = 1024
+# the image VAEs decode in 256-pixel tiles, up to four at a time (~128 MB each), into a float32 canvas
+STILL_DECODE_TILES = 4 * 128 * 1024 * 1024
+STILL_DECODE_FIXED = 256 * 1024 * 1024
+
+
+def _rows(latent) -> int:
+    # 2x2-patch rows of a video latent [1, C, T, H, W], or the rows of an audio latent [1, C, 2, T]
+    shape = tuple(latent.shape) if hasattr(latent, "shape") else tuple(latent)
+    if len(shape) == 5:
+        return shape[2] * ((shape[3] + 1) // 2) * ((shape[4] + 1) // 2)
+    return shape[-2] * shape[-1]
+
+
+def still_sampling_tokens(generation: Generation) -> int:
+    """The DiT's sequence length for a still: the image, any audio rows, the references and the prompt's share."""
+    tokens = _rows(generation.shapes.video) + _rows(generation.shapes.audio) + STILL_TEXT_TOKENS
+    for ref in generation.refs:
+        for key in ("latent", "audio_latent"):
+            if ref.get(key) is not None:
+                tokens += _rows(ref[key])
+    return tokens
+
+
+def still_sampling_memory(generation: Generation) -> int:
+    return still_sampling_tokens(generation) * STILL_BYTES_PER_TOKEN + STILL_FIXED_BYTES
+
+
+def still_decode_memory(shapes) -> int:
+    """Room for decoding a still: the decoder tiles and the canvas (3 float32 channels), so the DiT or the text
+    encoder leave VRAM when they must."""
+    _, _, _, h, w = shapes.video
+    return 3 * (h * 16) * (w * 16) * 4 * 2 + STILL_DECODE_TILES + STILL_DECODE_FIXED
+
+
 def finite(tensor: torch.Tensor) -> bool:
     """No NaN or Inf: max and min carry them through, without a mask the size of the video (one sync per call)."""
     return bool(torch.isfinite(tensor.amax()) and torch.isfinite(tensor.amin()))
@@ -375,7 +417,11 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         audio = audio / generation.audio_scale
 
         video_vae = self.forge_objects.vae
-        memory_management.load_model_gpu(video_vae.patcher)
+        if generation.shapes.video[2] == 1:
+            # a still decodes at once: room for its activations too (aoleg's fork, 8d405a3)
+            memory_management.load_models_gpu([video_vae.patcher], memory_required=still_decode_memory(generation.shapes))
+        else:
+            memory_management.load_model_gpu(video_vae.patcher)
         pixels = video_vae.first_stage_model.decode(video.to(video_vae.device, video_vae.vae_dtype))  # [1, 3, T, H, W] in [0, 1]
         if not finite(pixels):
             advice = " Start Forge Neo with --fp32-vae." if video_vae.vae_dtype != torch.float32 else ""

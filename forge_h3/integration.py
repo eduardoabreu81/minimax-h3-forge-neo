@@ -506,7 +506,10 @@ def before_sampling(p, noise):
     shape = p.sd_model.prepare(request.frames, request.width, request.height, int(p.seeds[0]))
     _set_sparse_attention(p)
     _add_control(p)
-    _reserve_references(p)
+    if request.output == "Still image":
+        _reserve_still(p)
+    else:
+        _reserve_references(p)
     _note_pdd(p)
     # Forge made p.rng for an image latent; the samplers that add noise on the way (ancestral, SDE, res_multistep)
     # draw from it too, so it has to give the packed shape
@@ -563,6 +566,21 @@ def _reserve_references(p):
     batch = 2 if getattr(shared, "batch_cond_uncond", True) else 1
     unet.add_extra_preserved_memory_during_sampling(int(unet.model.memory_required([batch, 1, elements])))
     engine.forge_objects.unet = unet
+
+
+def _reserve_still(p):
+    """A still's packed latent is a single frame, from which Forge reserves too little: next to a resident text encoder
+    P-H3-Image ran out of VRAM and crashed the video driver (#8). The DiT's whole sequence, the image, the references
+    and the prompt, is reserved per token instead (ported from aoleg's fork), so the text encoder leaves VRAM when the
+    two do not fit together."""
+    from .native.engine import still_sampling_memory, still_sampling_tokens
+    engine = p.sd_model
+    reserved = still_sampling_memory(engine.generation)
+    unet = engine.forge_objects.unet.clone()
+    unet.add_extra_preserved_memory_during_sampling(reserved)
+    engine.forge_objects.unet = unet
+    print(f"[MiniMax H3] keeping {reserved / 2**30:.1f} GiB of VRAM free for sampling "
+          f"({still_sampling_tokens(engine.generation)} tokens at most)")
 
 
 def _set_sparse_attention(p):

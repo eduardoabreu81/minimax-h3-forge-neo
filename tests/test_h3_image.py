@@ -353,6 +353,24 @@ class NativeTests(unittest.TestCase):
         self.assertTrue(torch.isfinite(v).all())
 
 
+@unittest.skipIf(torch is None, "needs torch and comfy-kitchen")
+class FileDtypeTests(unittest.TestCase):
+    def test_the_file_dtype_is_the_bulk_of_its_floating_weights(self):
+        from forge_h3.native.islands import floating_dtype
+        bf16 = {"model.layers.0.mlp.up_proj.weight": torch.ones(64, 8, dtype=torch.bfloat16),
+                "text_connector.proj.weight": torch.ones(4, 4, dtype=torch.float32),
+                "model.layers.0.input_layernorm.weight": torch.ones(8, dtype=torch.float32)}
+        self.assertEqual(floating_dtype(bf16), torch.bfloat16)
+        self.assertEqual(floating_dtype({"w": torch.ones(2, dtype=torch.float16), "i": torch.ones(2, dtype=torch.int8)}),
+                         torch.float16)
+        # quantized and GGUF files keep Forge's own choice
+        self.assertIsNone(floating_dtype(dict(bf16, **{"model.layers.0.mlp.up_proj.comfy_quant": torch.zeros(4, dtype=torch.uint8)})))
+        gguf = torch.nn.Parameter(torch.ones(2, dtype=torch.float16), requires_grad=False)
+        gguf.gguf_cls = object()
+        self.assertIsNone(floating_dtype({"w": gguf}))
+        self.assertIsNone(floating_dtype({}))
+
+
 @unittest.skipIf(torch is None, "needs torch")
 class TextEngineTests(unittest.TestCase):
     def setUp(self):
@@ -483,6 +501,25 @@ class H3ImageFlowTests(unittest.TestCase):
         self.assertEqual(tuple(image.shape), (1, 3, p.height, p.width))
         self.assertIsNone(generation.waveform)
 
+    def test_a_still_reserves_its_whole_sequence(self):
+        # Forge's estimate from a single frame is too small next to a resident text encoder (#8, aoleg's fork)
+        from test_flow import Txt2Img
+
+        from forge_h3.native.engine import (
+            STILL_BYTES_PER_TOKEN,
+            STILL_FIXED_BYTES,
+            STILL_TEXT_TOKENS,
+            still_decode_memory,
+            still_sampling_tokens,
+        )
+        self.run_still(Txt2Img())
+        generation = self.engine.generation
+        # 96x64: a 4x6 latent, 2x3 patch rows, no audio
+        self.assertEqual(still_sampling_tokens(generation), 6 + STILL_TEXT_TOKENS)
+        self.assertEqual(self.engine.forge_objects.unet.extra_preserved_memory_during_sampling,
+                         (6 + STILL_TEXT_TOKENS) * STILL_BYTES_PER_TOKEN + STILL_FIXED_BYTES)
+        self.assertGreater(still_decode_memory(generation.shapes), 3 * 96 * 64 * 4)
+
     def test_editing_takes_the_pictures_at_their_reference_sizes(self):
         from test_flow import Img2Img
         p = Img2Img(gallery=Image.new("RGB", (100, 50), "blue"))
@@ -501,6 +538,9 @@ class H3ImageFlowTests(unittest.TestCase):
                              [(64, 64), (64, 128)])
         refs = self.engine.generation.refs
         self.assertEqual([tuple(r["latent"].shape) for r in refs], [(1, 24, 1, 4, 4), (1, 24, 1, 4, 8)])
+        # the references join the reserved sequence: 2x2 and 2x4 patch rows
+        from forge_h3.native.engine import STILL_TEXT_TOKENS, still_sampling_tokens
+        self.assertEqual(still_sampling_tokens(self.engine.generation), 6 + 4 + 8 + STILL_TEXT_TOKENS)
 
     def test_up_to_16_pictures(self):
         from test_flow import Img2Img
