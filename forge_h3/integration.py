@@ -472,11 +472,11 @@ def _use_h3_image_sampling(p, engine):
     """MiniMax-H3-Image samples with no shift, and its PDD heads follow the sigma grid they were distilled on (from the
     checkpoint's metadata, MiniMax's published one when the file has none), whatever the schedule.
 
-    Every Schedule type runs as Forge runs it. The H3-Image schedules (native/schedules.py, aoleg's same-seed tests in
-    #8) end their last model evaluation at sigma 0.42 or above, where the picture comes out clean. Forge's own
-    schedules read the sigma table, which follows the grid (native/sampling.py), as ComfyUI's
-    MiniMaxH3ImageModelSampling does: Simple at 6 steps is MiniMax's reference recipe, whose last step at sigma 0.232
-    left speckle in those tests."""
+    Every sampler and Schedule type runs as Forge runs it. Forge's own schedules read the sigma table, which follows
+    the grid (native/sampling.py), as ComfyUI's MiniMaxH3ImageModelSampling does: Simple at 6 steps is MiniMax's
+    reference recipe. Its last step, at sigma 0.232, leaves speckle with Euler and Heun (aoleg's same-seed tests in #8),
+    and not with the H3-Image LCM sampler (native/lcm.py), which noises each clean estimate afresh: the h3i default. The
+    H3-Image schedules (native/schedules.py) end the last model evaluation at sigma 0.42, for Euler and Heun."""
     from .native import h3_image, schedules
     path = getattr(p, "h3_checkpoint", None)
     grid = (image_grid(path) if path else None) or h3_image.PDD_SIGMAS
@@ -487,10 +487,10 @@ def _use_h3_image_sampling(p, engine):
     if getattr(p, "h3_experimental", ""):
         p.extra_generation_params["H3 Experimental"] = p.h3_experimental
     advice = []
-    if schedule is None:
-        advice.append(f"an H3-Image schedule ({scheduler} follows the checkpoint's own grid)")
-    if getattr(p, "sampler_name", "Euler") not in ("Euler", "Heun"):
-        advice.append("the Euler or Heun sampler")
+    if schedule is None and getattr(p, "sampler_name", "") in ("Euler", "Heun"):
+        advice.append(f"the H3-Image LCM sampler on this schedule, or an H3-Image schedule with {p.sampler_name} "
+                      f"({scheduler} follows the checkpoint's own grid, whose last sigma leaves speckle with "
+                      f"{p.sampler_name})")
     if getattr(p, "cfg_scale", 1.0) != 1.0:
         advice.append("CFG 1 (it is distilled without guidance)")
     name = schedule[1] if schedule is not None else scheduler

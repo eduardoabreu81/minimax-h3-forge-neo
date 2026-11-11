@@ -31,22 +31,29 @@ class PredictionH3Image(PredictionDiscreteFlow):
             object.__setattr__(self, "_grid", grid)
             self.set_parameters()
 
-    def sigma(self, timestep):
+    def _sigma(self, timestep, snap: bool):
         timestep = torch.as_tensor(timestep, dtype=torch.float32)
         grid = torch.tensor(self._grid, dtype=torch.float32, device=timestep.device)
         n = grid.shape[0] - 1
         pos = (timestep / self.multiplier).clamp(0.0, 1.0) * n
-        nearest = pos.round()
-        pos = torch.where(((pos - nearest).abs() < SNAP) & (nearest > 0), nearest, pos)
+        if snap:
+            nearest = pos.round()
+            pos = torch.where(((pos - nearest).abs() < SNAP) & (nearest > 0), nearest, pos)
         i = pos.floor().long().clamp(max=n - 1)
         return torch.lerp(grid[i], grid[i + 1], pos - i)
 
+    def sigma(self, timestep):
+        return self._sigma(timestep, snap=True)
+
     def percent_to_sigma(self, percent):
+        # not snapped: samplers ask for a point just inside an end on purpose (ER SDE and the DPM++ SDE samplers move a
+        # first sigma of 1, an infinite log-SNR, to percent_to_sigma(1e-4)); snapped back to 1.0 it made NaN (aoleg's
+        # fork, 0.12.1)
         if percent <= 0.0:
             return 1.0
         if percent >= 1.0:
             return 0.0
-        return float(self.sigma(torch.tensor((1.0 - percent) * self.multiplier)))
+        return float(self._sigma(torch.tensor((1.0 - percent) * self.multiplier), snap=False))
 
 
 def _ascending(grid) -> tuple[float, ...]:

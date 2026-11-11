@@ -357,6 +357,13 @@ def apply() -> None:
         # MiniMax-H3-Image still runs on Forge's own schedules, which follow its grid
         logger.warning(f"[MiniMax H3] could not add the H3-Image schedules: {e}")
     try:
+        from . import lcm
+
+        lcm.register()
+    except Exception as e:
+        # MiniMax-H3-Image still runs on Forge's own LCM, at a fixed noise scale
+        logger.warning(f"[MiniMax H3] could not add the H3-Image LCM sampler: {e}")
+    try:
         from . import presets
 
         presets.register()

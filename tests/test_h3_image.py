@@ -109,7 +109,7 @@ class ComponentTests(Files, unittest.TestCase):
             (dit, [te, video, audio], "own image VAE"),
             (dit, [te, vae, audio], "audio VAE"),
             (dit, [te, ph3_te, vae], "Two text encoders"),
-            (dit, [te, ph3_vae], "P-H3-Image VAE"),
+            (dit, [te, ph3_vae, vae], "Two image VAEs"),
             (dit, [vae], "H3 text encoder"),
             (dit, [te], "MiniMax-H3-Image VAE"),
             (h3_dit, [te, vae], "MiniMax-H3-Image diffusion model"),
@@ -127,6 +127,17 @@ class ComponentTests(Files, unittest.TestCase):
         self.assertEqual((components.variant, components.text_encoder.role, components.experimental),
                          (H3_IMAGE, "ph3_text_encoder", "P-H3-Image text encoder"))
         self.assertEqual(resolve_components(dit, [self.file(H3_TE), vae]).experimental, "")
+
+    def test_p_h3_images_vae_is_an_experiment(self):
+        # aoleg's fork (0.11.1, #8): the same H3 encoder and latents with another single-frame decoder, alone or with
+        # P-H3-Image's text encoder
+        dit, ph3_vae = self.file("minimax_h3_image_pruned_int8_convrot"), self.file("p-h3-image_vae_bf16")
+        components = resolve_components(dit, [self.file(H3_TE), ph3_vae])
+        self.assertEqual((components.variant, components.video_vae.role, components.experimental),
+                         (H3_IMAGE, "ph3_vae", "P-H3-Image VAE"))
+        both = resolve_components(dit, [self.file("p-h3-image_text_encoder_bf16"), ph3_vae])
+        self.assertEqual((both.variant, both.experimental), (H3_IMAGE, "P-H3-Image text encoder + P-H3-Image VAE"))
+        self.assertEqual([m.role for m in both.models], ["dit", "ph3_text_encoder", "ph3_vae"])
 
     def test_the_prompt_expander_is_named_as_such(self):
         # Comfy-Org's Qwen3.5 9B for ComfyUI's Generate Text node, taken for the text encoder in issue #8
@@ -302,6 +313,12 @@ class NativeTests(unittest.TestCase):
         self.assertGreater(float(predictor.sigmas[0]), 0.0)
         self.assertEqual((predictor.percent_to_sigma(0.0), predictor.percent_to_sigma(1.0)), (1.0, 0.0))
         self.assertAlmostEqual(predictor.percent_to_sigma(0.5), 0.75, places=6)
+        # a point just inside an end stays inside: ER SDE moves a first sigma of 1 to percent_to_sigma(1e-4), and a
+        # snapped 1.0 there has an infinite log-SNR (NaN; aoleg's fork, 0.12.1)
+        near_top = predictor.percent_to_sigma(1e-4)
+        self.assertTrue(GRID[1] < near_top < 1.0)
+        self.assertTrue(bool(torch.isfinite(torch.tensor(near_top).logit())))
+        self.assertGreater(predictor.percent_to_sigma(1.0 - 1e-4), 0.0)
         # a file's own grid is followed
         other = (1.0, 0.6, 0.0)
         predictor.set_grid(other)
@@ -441,6 +458,12 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(self.variant(h3_dit, connector, object(), None), PH3_IMAGE)
         # P-H3-Image's text encoder in front of MiniMax-H3-Image, the experiment from aoleg's fork
         self.assertEqual(self.variant(image_dit, connector, self.image_vae, None), H3_IMAGE)
+        # and P-H3-Image's VAE (aoleg's fork, 0.11.1)
+        with torch.device("meta"):
+            ph3_vae = self.module.ph3.PH3ImageVAE(num_layers=1)
+        self.assertEqual(self.variant(image_dit, te, ph3_vae, None), H3_IMAGE)
+        self.assertEqual(self.variant(image_dit, connector, ph3_vae, None), H3_IMAGE)
+        self.assertEqual(self.variant(h3_dit, connector, ph3_vae, None), PH3_IMAGE)
         for args in ((image_dit, te, object(), None), (h3_dit, te, self.image_vae, None),
                      (image_dit, te, self.image_vae, object())):
             with self.assertRaisesRegex(H3Error, "MiniMax-H3-Image components are mixed"):
@@ -682,6 +705,77 @@ class ScheduleTests(unittest.TestCase):
                                                                                  device="cpu")), 9)
 
 
+class FlowPredictor:
+    """Forge's flow noise scaling: sigma * noise + (1 - sigma) * latent."""
+
+    @staticmethod
+    def noise_scaling(sigma, noise, latent):
+        return sigma * noise + (1.0 - sigma) * latent
+
+
+class FakeDenoiser:
+    """Always predicts the same clean latent and records what it was given."""
+
+    def __init__(self, clean):
+        self.clean = clean
+        self.calls = []
+        self.inner_model = types.SimpleNamespace(predictor=FlowPredictor())
+
+    def __call__(self, x, sigma, **kwargs):
+        self.calls.append((x.clone(), float(sigma[0])))
+        return self.clean.clone()
+
+
+@unittest.skipIf(torch is None, "needs torch")
+class LCMTests(unittest.TestCase):
+    """The H3-Image LCM sampler (aoleg's fork, 0.12.0): LCM with a noise scale falling from 1.10 to 0.90."""
+
+    def test_the_noise_scale(self):
+        from forge_h3.native import lcm
+        self.assertEqual([round(lcm.noise_scale(i, 6), 4) for i in range(6)], [1.10, 1.06, 1.02, 0.98, 0.94, 0.90])
+        self.assertEqual(lcm.noise_scale(0, 1), lcm.S_NOISE_START)
+
+    def test_each_step_noises_the_clean_estimate_afresh(self):
+        from forge_h3.native.lcm import sample_h3_image_lcm
+        clean = torch.full((1, 2, 3, 3), 0.5)
+        noise = torch.ones_like(clean)
+        model = FakeDenoiser(clean)
+        drawn, seen = [], []
+        out = sample_h3_image_lcm(model, torch.randn_like(clean), torch.tensor([1.0, 0.75, 0.25, 0.0]),
+                                  callback=lambda d: seen.append(d["i"]),
+                                  noise_sampler=lambda s, s_next: drawn.append((float(s), float(s_next))) or noise)
+        self.assertEqual([round(s, 4) for _, s in model.calls], [1.0, 0.75, 0.25])
+        self.assertEqual((drawn, seen), ([(1.0, 0.75), (0.75, 0.25)], [0, 1, 2]))
+        # three steps: the scale runs 1.10, 1.00, 0.90 (the last unused: the step to 0 adds no noise)
+        torch.testing.assert_close(model.calls[1][0], 0.75 * 1.10 * noise + 0.25 * clean)
+        torch.testing.assert_close(model.calls[2][0], 0.25 * 1.00 * noise + 0.75 * clean)
+        torch.testing.assert_close(out, clean)
+
+    def test_registered_with_forge(self):
+        added = []
+        sampler_data = lambda name, constructor, aliases, options: types.SimpleNamespace(  # noqa: E731
+            name=name, constructor=constructor, aliases=aliases, options=options)
+        made = []
+
+        class KDiffusionSampler:
+            def __init__(self, funcname, model):
+                made.append((funcname, model))
+
+        stubs = {
+            "modules.sd_samplers": forge_stubs.module("modules.sd_samplers", add_sampler=added.append),
+            "modules.sd_samplers_common": forge_stubs.module("modules.sd_samplers_common", SamplerData=sampler_data),
+            "modules.sd_samplers_kdiffusion": forge_stubs.module("modules.sd_samplers_kdiffusion",
+                                                                 KDiffusionSampler=KDiffusionSampler),
+        }
+        stubs["modules"] = forge_stubs.module("modules", **{k.split(".")[1]: v for k, v in stubs.items()})
+        with patch.dict(sys.modules, stubs):
+            from forge_h3.native import lcm
+            lcm.register()
+        self.assertEqual([(d.name, d.aliases) for d in added], [("H3-Image LCM", ["h3_image_lcm"])])
+        added[0].constructor("model")
+        self.assertEqual(made, [(lcm.sample_h3_image_lcm, "model")])
+
+
 class PresetTests(unittest.TestCase):
     def test_the_h3i_preset(self):
         from enum import Enum
@@ -713,7 +807,7 @@ class PresetTests(unittest.TestCase):
         importlib.import_module("forge_h3.native.presets").register()
         h3i = PresetArch["h3i"]
         self.assertEqual((forge.SAMPLERS[h3i], forge.SCHEDULERS[h3i], forge.STEPS[h3i], forge.CFG[h3i]),
-                         ("Euler", "H3-Image 8-step", 8, 1.0))
+                         ("H3-Image LCM", "Simple", 6, 1.0))
         self.assertNotIn(h3i, forge.SHIFT)
         self.assertEqual({added[f"h3i_{k}"].default for k in ("t2i_width", "i2i_width", "t2i_height", "i2i_height")},
                          {2048})
@@ -767,7 +861,7 @@ class PanelTests(unittest.TestCase):
                 enter = fn("H3I", "Video", [H3_TE + ".safetensors", image_vae.name], {"active": False}, *native, "h3i")
                 self.assertIn("MiniMax-H3-Image", enter[6])
                 self.assertEqual((enter[-1]["value"], enter[-1]["interactive"]), ("Still image", False))
-                self.assertEqual([enter[i]["value"] for i in (11, 12, 13)], ["Euler", "H3-Image 8-step", 1.0])
+                self.assertEqual([enter[i]["value"] for i in (11, 12, 13)], ["H3-Image LCM", "Simple", 1.0])
                 self.assertIn("MiniMax-H3-Image makes still images", enter[5])
                 self.assertFalse(enter[1]["visible"] or enter[2]["visible"] or enter[4]["visible"])
                 # back to H3 with its files: the h3 preset's settings and Output free again

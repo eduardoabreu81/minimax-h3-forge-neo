@@ -101,14 +101,15 @@ def _video_vae_dtype() -> torch.dtype:
 
 def component_variant(components) -> str:
     """The variant the loaded components make, refusing a mix: MiniMax-H3-Image's DiT has no audio stream and takes its
-    image VAE, with H3's text encoder or, as an experiment, P-H3-Image's (aoleg's fork, 0.9.1); P-H3-Image's text
-    encoder has a text connector and its VAE no audio part."""
+    image VAE, with H3's text encoder; P-H3-Image's text encoder and VAE are let through in front of it as experiments
+    (aoleg's fork, 0.9.1 and 0.11.1). P-H3-Image's text encoder has a text connector and its VAE no audio part."""
     image_dit = getattr(components["transformer"], "audio_patch_proj", True) is None
     connector = getattr(components["text_encoder"], "text_connector", None) is not None
     pair = components["vae"]
     image_vae = isinstance(pair.video, h3_image.H3ImageVAE)
     if image_dit or image_vae:
-        if not (image_dit and image_vae) or pair.audio is not None:
+        # H3ImageVAE is a PH3ImageVAE with another decoder: either reads the same latents
+        if not (image_dit and isinstance(pair.video, ph3.PH3ImageVAE)) or pair.audio is not None:
             raise H3Error("MiniMax-H3-Image components are mixed: it takes its own diffusion model and image VAE with "
                           "H3's text encoder, and no audio VAE.")
         return H3_IMAGE

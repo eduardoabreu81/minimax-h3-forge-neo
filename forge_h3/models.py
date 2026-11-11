@@ -356,25 +356,32 @@ def resolve_components(dit_path, module_paths):
 
 
 def _h3_image_components(resolved):
-    """MiniMax-H3-Image: its own diffusion model and image VAE with H3's text encoder, and no audio VAE. P-H3-Image's 4B
-    text encoder is let through as an experiment (aoleg's fork, 0.9.1): Pruna distilled it, with its text connector,
-    to stand in for H3's 32B one in front of an H3 DiT, so its conditioning has the width this checkpoint reads."""
+    """MiniMax-H3-Image: its own diffusion model and image VAE with H3's text encoder, and no audio VAE. Two parts of
+    P-H3-Image are let through as experiments (aoleg's fork, 0.9.1 and 0.11.1): its 4B text encoder, which Pruna
+    distilled with its text connector to stand in for H3's 32B one in front of an H3 DiT, so its conditioning has the
+    width this checkpoint reads; and its VAE, the same H3 encoder and latents with another single-frame decoder."""
     if resolved["dit"].variant != "image":
         raise H3Error("The MiniMax-H3-Image VAE needs the MiniMax-H3-Image diffusion model: select a "
                       "minimax_h3_image checkpoint, or the H3 video VAE and audio VAE for this one.")
-    if "h3i_vae" not in resolved and "video_vae" in resolved:
+    if "h3i_vae" not in resolved and "ph3_vae" not in resolved and "video_vae" in resolved:
         raise H3Error("The MiniMax-H3-Image diffusion model needs its own image VAE: select minimax_h3_image_vae in "
                       "place of the H3 video VAE.")
-    other = [ROLE_LABELS[role] for role in ("ph3_vae", "video_vae", "audio_vae") if role in resolved]
+    other = [ROLE_LABELS[role] for role in ("video_vae", "audio_vae") if role in resolved]
     if other:
         raise H3Error(f"MiniMax-H3-Image does not take the {' or the '.join(other)}: deselect "
                       f"{'it' if len(other) == 1 else 'them'}. It uses H3's text encoder and its own image VAE.")
     if "text_encoder" in resolved and "ph3_text_encoder" in resolved:
         raise H3Error("Two text encoders are selected: keep H3's or P-H3-Image's, not both.")
-    experimental = ""
+    if "h3i_vae" in resolved and "ph3_vae" in resolved:
+        raise H3Error("Two image VAEs are selected: keep MiniMax-H3-Image's or P-H3-Image's, not both.")
+    parts = []
     if "ph3_text_encoder" in resolved:
         resolved["text_encoder"] = resolved.pop("ph3_text_encoder")
-        experimental = "P-H3-Image text encoder"
+        parts.append("P-H3-Image text encoder")
+    if "ph3_vae" in resolved:
+        resolved["h3i_vae"] = resolved.pop("ph3_vae")
+        parts.append("P-H3-Image VAE")
+    experimental = " + ".join(parts)
     if "text_encoder" in resolved and resolved["text_encoder"].quantization == "nvfp4":
         raise H3Error("The NVFP4 AWQ text encoder does not encode prompts correctly in Forge Neo yet. Select qwen3vl_32b_minimax_h3_int8_convrot or the bf16 text encoder.")
     for role in ("text_encoder", "h3i_vae"):

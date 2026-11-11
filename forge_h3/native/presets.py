@@ -33,14 +33,15 @@ PH3_CFG = 1.0
 PH3_SIZE = 2048
 PH3_SIZE_OPTIONS = tuple(f"{PH3_PRESET}_{kind}_{side}" for kind in ("t2i", "i2i") for side in ("width", "height"))
 
-# MiniMax-H3-Image: Euler, 8 steps on the H3-Image 8-step schedule (native/schedules.py), CFG 1, with no shift, so no
-# Shift slider (aoleg's same-seed tests, #8; Heun, at twice the time per step, was his best sampler). Forge's own
-# schedules work too, on the checkpoint's grid (Simple at 6 steps is MiniMax's reference). It works from about 4 MP and is
-# best around 16 MP; 2048x2048 is ComfyUI's default and the largest the sliders allow
+# MiniMax-H3-Image: the H3-Image LCM sampler (native/lcm.py) on Simple at 6 steps, the checkpoint's own grid, CFG 1,
+# with no shift, so no Shift slider (aoleg's same-seed tests, #8: cleaner than Euler or Heun on any schedule). The
+# H3-Image schedules (native/schedules.py) are for Euler and Heun, which leave speckle at the grid's last sigma; Forge's
+# own schedules follow the grid too. It works from about 4 MP and is best around 16 MP; 2048x2048 is ComfyUI's default
+# and the largest the sliders allow
 H3I_PRESET = "h3i"
-H3I_SAMPLER = "Euler"
-H3I_SCHEDULER = "H3-Image 8-step"
-H3I_STEPS = 8
+H3I_SAMPLER = "H3-Image LCM"
+H3I_SCHEDULER = "Simple"
+H3I_STEPS = 6
 H3I_CFG = 1.0
 H3I_SIZE = 2048
 H3I_SIZE_OPTIONS = tuple(f"{H3I_PRESET}_{kind}_{side}" for kind in ("t2i", "i2i") for side in ("width", "height"))
