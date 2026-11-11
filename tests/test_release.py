@@ -38,6 +38,17 @@ class ReleaseTests(unittest.TestCase):
         # Forge's detach still works on the emptied model
         self.dit.to("cpu")
 
+    def test_pinned_weights_are_unregistered_before_the_tensors_go(self):
+        # --pin-shared-memory: Forge unpins by looking each weight up again, so it must happen while they still exist
+        from forge_h3.native.release import release_replaced
+        seen = []
+        patcher = self.loaded[0].model
+        patcher.unpin_all_weights = lambda: seen.append(self.sizes(self.dit))
+        before = self.sizes(self.dit)
+        release_replaced(self.loaded, None, self.types)
+        self.assertEqual(seen, [before])
+        self.assertEqual(self.sizes(self.dit), 0)
+
     def test_active_h3_is_left_alone(self):
         from forge_h3.native.release import release_replaced
         before = self.sizes(self.dit)

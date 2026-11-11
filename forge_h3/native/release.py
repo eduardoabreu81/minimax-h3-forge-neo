@@ -58,6 +58,12 @@ def release_replaced(loaded_models, active_model, types: tuple[type, ...]) -> in
         backup = getattr(patcher, "backup", None)
         if isinstance(backup, dict):
             backup.clear()
+        # with --pin-shared-memory Forge registers the weights it keeps in system RAM with the driver, and unregisters
+        # them by looking the weights up again: emptied first, they stay registered, and the next file mapped at the
+        # same addresses fails to copy ("Copy is larger than memobj size")
+        unpin = getattr(patcher, "unpin_all_weights", None)
+        if callable(unpin):
+            unpin()
         empty_tensors(module)
         released += 1
     return released
