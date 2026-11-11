@@ -350,6 +350,13 @@ def apply() -> None:
         logger.warning(f"[MiniMax H3] could not add the taeh3 preview: {e}")
 
     try:
+        from . import schedules
+
+        schedules.register()
+    except Exception as e:
+        # MiniMax-H3-Image still samples on P-H3-Image's grid, or its own at 6 steps
+        logger.warning(f"[MiniMax H3] could not add the H3-Image schedules: {e}")
+    try:
         from . import presets
 
         presets.register()

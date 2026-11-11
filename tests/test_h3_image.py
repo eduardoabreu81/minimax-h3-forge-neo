@@ -529,6 +529,29 @@ class H3ImageFlowTests(unittest.TestCase):
                       {"sampling_sigmas": schedule})
             self.assertTrue(torch.isfinite(out).all())
 
+    def test_an_h3_image_schedule_runs_as_forge_runs_any_schedule(self):
+        # aoleg's schedules (#8, his fork's 0.11.0): Forge calls them and writes the Schedule type, the heads stay on
+        # the grid
+        from test_flow import Txt2Img
+        for label in ("H3-Image 8-step", "h3_image_8_softer", "H3-Image 6-step", "P-H3-Image"):
+            p = Txt2Img()
+            p.steps, p.sampler_name, p.cfg_scale, p.scheduler = 8, "Heun", 1.0, label
+            self.run_still(p)
+            self.assertIsNone(getattr(p, "sampler_noise_scheduler_override", None), label)
+            self.assertNotIn("H3 Sigmas", p.extra_generation_params)
+            self.assertEqual(p.extra_generation_params["H3 Variant"], "MiniMax-H3-Image")
+            self.assertEqual(self.engine.forge_objects.unet.model.diffusion_model.pdd_sigmas, self.grid)
+
+    def test_forge_schedules_keep_the_grids(self):
+        from test_flow import Txt2Img
+
+        from forge_h3.native import ph3
+        p = Txt2Img()
+        p.steps, p.sampler_name, p.cfg_scale, p.scheduler = 8, "Euler", 1.0, "Simple"
+        self.run_still(p)
+        self.assertEqual(p.sampler_noise_scheduler_override(8).tolist(), list(torch.tensor(ph3.SIGMAS)))
+        self.assertEqual(p.extra_generation_params["H3 Sigmas"], "P-H3-Image grid")
+
     def test_a_still_reserves_its_whole_sequence(self):
         # Forge's estimate from a single frame is too small next to a resident text encoder (#8, aoleg's fork)
         from test_flow import Txt2Img
@@ -585,6 +608,73 @@ class H3ImageFlowTests(unittest.TestCase):
             integration.before_process(Txt2Img(), "Still image", True, ref_audios=("voice.wav",))
 
 
+class ScheduleTests(unittest.TestCase):
+    """The H3-Image schedules (aoleg's same-seed tests, #8): each ends its last model evaluation at sigma 0.42."""
+
+    def test_the_8_step_curve(self):
+        from forge_h3.native import schedules
+        sigmas = schedules.eight_step(8, device="cpu")
+        self.assertEqual(len(sigmas), 9)
+        self.assertAlmostEqual(sigmas[0].item(), 1.0, places=6)
+        self.assertAlmostEqual(sigmas[-2].item(), schedules.TAIL, places=6)
+        self.assertEqual(sigmas[-1].item(), 0.0)
+        self.assertTrue(bool((sigmas[1:] < sigmas[:-1]).all()))
+        self.assertAlmostEqual(schedules.CURVE_SHIFT, 5.0690, places=3)
+        # more steps sample the same curve, between the same ends
+        finer = schedules.eight_step(16)
+        self.assertEqual(len(finer), 17)
+        self.assertAlmostEqual(finer[-2].item(), schedules.TAIL, places=6)
+
+    def test_the_lists(self):
+        from forge_h3.native import ph3, schedules
+        self.assertEqual(schedules.eight_step_softer(8).tolist(),
+                         list(torch.tensor(schedules.SOFTER_SIGMAS + (0.0,))))
+        six = schedules.six_step(6)
+        self.assertEqual(six.tolist(), list(torch.tensor(GRID[:5] + (schedules.TAIL, 0.0))))
+        self.assertEqual(schedules.ph3_image(8).tolist(), list(torch.tensor(ph3.SIGMAS)))
+        # another step count keeps both ends of the list
+        for n in (3, 12):
+            sigmas = schedules.eight_step_softer(n)
+            self.assertEqual(len(sigmas), n + 1)
+            self.assertAlmostEqual(sigmas[0].item(), 1.0, places=6)
+            self.assertAlmostEqual(sigmas[-2].item(), schedules.TAIL, places=6)
+
+    def test_found_by_name_or_label(self):
+        from forge_h3.native import schedules
+        self.assertEqual(schedules.find("h3_image_8")[1], "H3-Image 8-step")
+        self.assertEqual(schedules.find("H3-Image 8-step softer")[0], "h3_image_8_softer")
+        self.assertIsNone(schedules.find("Simple"))
+        self.assertIsNone(schedules.find(None))
+
+    def test_registered_with_forge(self):
+        import dataclasses
+
+        @dataclasses.dataclass
+        class Scheduler:
+            name: str
+            label: str
+            function: object
+
+        simple = Scheduler("simple", "Simple", None)
+        opts = types.SimpleNamespace(hide_schedulers=["H3-Image 6-step"])
+        sd_schedulers = forge_stubs.module("modules.sd_schedulers", Scheduler=Scheduler, all_schedulers=[simple],
+                                           schedulers=[simple], schedulers_map={"simple": simple, "Simple": simple},
+                                           shared=types.SimpleNamespace(opts=opts))
+        modules = forge_stubs.module("modules", sd_schedulers=sd_schedulers)
+        with patch.dict(sys.modules, {"modules": modules, "modules.sd_schedulers": sd_schedulers}):
+            from forge_h3.native import schedules
+            schedules.register()
+            schedules.register()
+        self.assertEqual([s.label for s in sd_schedulers.all_schedulers],
+                         ["Simple", "H3-Image 8-step", "H3-Image 8-step softer", "H3-Image 6-step", "P-H3-Image"])
+        self.assertEqual([s.label for s in sd_schedulers.schedulers],
+                         ["Simple", "H3-Image 8-step", "H3-Image 8-step softer", "P-H3-Image"])
+        self.assertIs(sd_schedulers.schedulers_map["h3_image_8"], sd_schedulers.schedulers_map["H3-Image 8-step"])
+        self.assertNotIn("H3-Image 6-step", sd_schedulers.schedulers_map)
+        self.assertEqual(len(sd_schedulers.schedulers_map["P-H3-Image"].function(8, sigma_min=0.0, sigma_max=1.0,
+                                                                                 device="cpu")), 9)
+
+
 class PresetTests(unittest.TestCase):
     def test_the_h3i_preset(self):
         from enum import Enum
@@ -616,7 +706,7 @@ class PresetTests(unittest.TestCase):
         importlib.import_module("forge_h3.native.presets").register()
         h3i = PresetArch["h3i"]
         self.assertEqual((forge.SAMPLERS[h3i], forge.SCHEDULERS[h3i], forge.STEPS[h3i], forge.CFG[h3i]),
-                         ("Euler", "Simple", 8, 1.0))
+                         ("Euler", "H3-Image 8-step", 8, 1.0))
         self.assertNotIn(h3i, forge.SHIFT)
         self.assertEqual({added[f"h3i_{k}"].default for k in ("t2i_width", "i2i_width", "t2i_height", "i2i_height")},
                          {2048})
@@ -670,7 +760,7 @@ class PanelTests(unittest.TestCase):
                 enter = fn("H3I", "Video", [H3_TE + ".safetensors", image_vae.name], {"active": False}, *native, "h3i")
                 self.assertIn("MiniMax-H3-Image", enter[6])
                 self.assertEqual((enter[-1]["value"], enter[-1]["interactive"]), ("Still image", False))
-                self.assertEqual([enter[i]["value"] for i in (11, 12, 13)], ["Euler", "Simple", 1.0])
+                self.assertEqual([enter[i]["value"] for i in (11, 12, 13)], ["Euler", "H3-Image 8-step", 1.0])
                 self.assertIn("MiniMax-H3-Image makes still images", enter[5])
                 self.assertFalse(enter[1]["visible"] or enter[2]["visible"] or enter[4]["visible"])
                 # back to H3 with its files: the h3 preset's settings and Output free again
