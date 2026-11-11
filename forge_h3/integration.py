@@ -299,6 +299,10 @@ def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_vi
         validate_img2img(p, mode)
         keyframes.settle_preserved_aspect(p)
     p.h3_fast = components.dit.variant == "fast"
+    p.h3_experimental = components.experimental
+    if components.experimental:
+        print(f"[MiniMax H3] {VARIANT_LABELS[variant]} with the {components.experimental} (experimental: it was not "
+              "released with this text encoder)")
     if p.h3_fast:
         # its recipe: 8 steps, video shift 10 (audio 3), and the VSA sparse attention it was trained with
         print("[MiniMax H3] FastH3 checkpoint: use 8 steps and Shift 10; turn on Sparse Attention Integrated for its VSA attention")
@@ -465,26 +469,35 @@ def _use_ph3_sampling(p):
 
 
 def _use_h3_image_sampling(p, engine):
-    """MiniMax-H3-Image samples on the sigma grid its PDD heads were distilled on (6 steps; another count reads the
-    same curve), whatever the Schedule type, as ComfyUI's MiniMaxH3ImageModelSampling does; the grid comes from the
-    checkpoint's metadata, MiniMax's published one when the file has none."""
-    from .native import h3_image
+    """MiniMax-H3-Image samples with no shift, whatever the Schedule type, and its PDD heads follow the sigma grid they
+    were distilled on (from the checkpoint's metadata, MiniMax's published one when the file has none). At that grid's
+    step count (6) the schedule is the grid itself, MiniMax's reference recipe (ComfyUI's MiniMaxH3ImageModelSampling);
+    at any other count it is P-H3-Image's, 8 steps by default: in aoleg's same-seed tests (#8, his fork's 0.9.1) the
+    reference's two low-noise steps left speckle, and P-H3-Image's schedule, whose last step starts from sigma 0.53,
+    came out clean."""
+    from .native import h3_image, ph3
     path = getattr(p, "h3_checkpoint", None)
     grid = (image_grid(path) if path else None) or h3_image.PDD_SIGMAS
     engine.set_image_grid(grid)
-    p.sampler_noise_scheduler_override = lambda steps: h3_image.sigmas(steps, grid)
+    reference_steps = len(grid) - 1
+    steps = getattr(p, "steps", ph3.STEPS)
+    reference = steps == reference_steps
+    p.sampler_noise_scheduler_override = ((lambda n: h3_image.sigmas(n, grid)) if reference else ph3.sigmas)
+    name = "MiniMax-H3-Image grid" if reference else "P-H3-Image grid"
     p.extra_generation_params["H3 Variant"] = "MiniMax-H3-Image"
-    p.extra_generation_params["H3 Sigmas"] = "MiniMax-H3-Image grid"
-    steps = len(grid) - 1
+    p.extra_generation_params["H3 Sigmas"] = name
+    if getattr(p, "h3_experimental", ""):
+        p.extra_generation_params["H3 Experimental"] = p.h3_experimental
     advice = []
-    if getattr(p, "steps", steps) != steps:
-        advice.append(f"{steps} steps")
-    if getattr(p, "sampler_name", "Euler") != "Euler":
-        advice.append("the Euler sampler")
+    if not reference and steps != ph3.STEPS:
+        advice.append(f"{ph3.STEPS} steps on P-H3-Image's schedule, or {reference_steps} on its own grid")
+    if getattr(p, "sampler_name", "Euler") not in ("Euler", "Heun"):
+        advice.append("the Euler or Heun sampler")
     if getattr(p, "cfg_scale", 1.0) != 1.0:
         advice.append("CFG 1 (it is distilled without guidance)")
     note = f"; it is made for {', '.join(advice)}" if advice else ""
-    print(f"[MiniMax H3] MiniMax-H3-Image samples on its own sigma grid with no shift (Schedule type is not used){note}")
+    print(f"[MiniMax H3] MiniMax-H3-Image samples on the {name} with no shift (Schedule type is not used; "
+          f"{reference_steps} steps take MiniMax's own grid){note}")
     size = h3_image.size_advice(p.width, p.height)
     if size:
         print(f"[MiniMax H3] {size}")

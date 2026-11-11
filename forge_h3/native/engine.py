@@ -45,8 +45,9 @@ def encode_memory(shape, dtype) -> int:
 # A still's sampling memory, ported from aoleg's fork (aoleg/pruna-P-H3-Image-forge-neo 8d405a3). Forge sizes the
 # headroom from the packed latent, which is small for a single frame, and left too little next to a resident text
 # encoder (an out-of-memory error and a driver crash with P-H3-Image, #8). The DiT's working memory follows its
-# sequence instead: about 1 MB per token measured on a 32 GB card, with the allocator's slack.
-STILL_BYTES_PER_TOKEN = 1536 * 1024
+# sequence instead: a few hundred KB per token by the layers' widths, kept with a margin (aoleg's fork, 0.9.0).
+# MiniMax-H3-Image at 16 MP is 16k image tokens: twice this figure would push most of the DiT out of a 32 GB card.
+STILL_BYTES_PER_TOKEN = 768 * 1024
 STILL_FIXED_BYTES = 1024 * 1024 * 1024
 # the prompt's share of the sequence is not known when the reservation is made; a long edit brief is a few hundred
 STILL_TEXT_TOKENS = 1024
@@ -99,14 +100,15 @@ def _video_vae_dtype() -> torch.dtype:
 
 
 def component_variant(components) -> str:
-    """The variant the loaded components make, refusing a mix: MiniMax-H3-Image's DiT has no audio stream and takes H3's
-    text encoder with its image VAE; P-H3-Image's text encoder has a text connector and its VAE no audio part."""
+    """The variant the loaded components make, refusing a mix: MiniMax-H3-Image's DiT has no audio stream and takes its
+    image VAE, with H3's text encoder or, as an experiment, P-H3-Image's (aoleg's fork, 0.9.1); P-H3-Image's text
+    encoder has a text connector and its VAE no audio part."""
     image_dit = getattr(components["transformer"], "audio_patch_proj", True) is None
     connector = getattr(components["text_encoder"], "text_connector", None) is not None
     pair = components["vae"]
     image_vae = isinstance(pair.video, h3_image.H3ImageVAE)
     if image_dit or image_vae:
-        if not (image_dit and image_vae) or connector or pair.audio is not None:
+        if not (image_dit and image_vae) or pair.audio is not None:
             raise H3Error("MiniMax-H3-Image components are mixed: it takes its own diffusion model and image VAE with "
                           "H3's text encoder, and no audio VAE.")
         return H3_IMAGE

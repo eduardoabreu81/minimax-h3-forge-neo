@@ -44,7 +44,7 @@ Generate **videos with sound** with **[MiniMax H3](https://github.com/MiniMax-AI
 
 ### v0.9.0 - MiniMax-H3-Image
 
-- **[MiniMax-H3-Image](https://huggingface.co/MiniMaxAI/MiniMax-H3-Image)**, MiniMax's own image model of the H3 family - stills from text, or edits of a picture with up to 15 more as references, in 6 steps. It uses **H3's text encoder** (the file you already have) with its own checkpoint and VAE, and no audio VAE. Select its files and the extension recognizes it; H3 and P-H3-Image work as before. A new **h3i** UI preset keeps its files and settings. **Experimental:** checked on the CPU against the published files and against ComfyUI's code, not yet run on a GPU
+- **[MiniMax-H3-Image](https://huggingface.co/MiniMaxAI/MiniMax-H3-Image)**, MiniMax's own image model of the H3 family - stills from text, or edits of a picture with up to 15 more as references, in 8 steps. It uses **H3's text encoder** (the file you already have) with its own checkpoint and VAE, and no audio VAE. P-H3-Image's much smaller text encoder works too, as an experiment (thanks to [aoleg](https://github.com/aoleg) for the tests and the 8-step recipe). Select its files and the extension recognizes it; H3 and P-H3-Image work as before. A new **h3i** UI preset keeps its files and settings. **Experimental:** checked on the CPU against the published files and against ComfyUI's code, not yet run on a GPU
 
 ### v0.8.0 - Still Images and P-H3-Image
 
@@ -187,8 +187,9 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 ### 🖼️ MiniMax-H3-Image (Experimental)
 
 - MiniMax's **image model** of the H3 family: detailed stills from about 4 to 20 megapixels, from text or edited from pictures
-- Pick the **h3i** UI preset (Euler, 6 steps, CFG 1, 2048x2048), then its checkpoint, **H3's text encoder** and **its own VAE** - no video VAE, no audio VAE
-- The extension recognizes it from the files, sets **Output** to **Still image** by itself and always samples on the model's own 6-step schedule
+- Pick the **h3i** UI preset (Euler, 8 steps, CFG 1, 2048x2048), then its checkpoint, **H3's text encoder** and **its own VAE** - no video VAE, no audio VAE
+- **Less VRAM:** P-H3-Image's text encoder (about 5 GB instead of 15 GB) can take the place of H3's. It is an experiment: the model was not released with it, but it gives good results in tests
+- The extension recognizes it from the files and sets **Output** to **Still image** by itself. 8 steps give the cleanest pictures; 6 steps follow MiniMax's own recipe, if you want to compare
 - **Bigger is better:** 2048x2048 is the smallest size it is made for, and MiniMax gets its best results around 4096x4096
 - **Editing** in img2img: the input image is `<Picture 1>`, the ImageStitch gallery the next ones, up to 16 in all. Name them in the prompt: "put the hat from `<Picture 2>` on the man in `<Picture 1>`"
 - It follows **long, detailed English descriptions** of the whole picture best. MiniMax's prompt expander is not included: write the detailed prompt yourself, or let another LLM expand it
@@ -309,7 +310,7 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 | Text encoder | [p-h3-image_text_encoder_int8_convrot](https://huggingface.co/PrunaAI/P-H3-Image-Comfy/blob/main/text_encoders/p-h3-image_text_encoder_int8_convrot.safetensors), or `_bf16` | 5.1 GB | `models/text_encoder` |
 | VAE | [p-h3-image_vae_bf16](https://huggingface.co/PrunaAI/P-H3-Image-Comfy/blob/main/vae/p-h3-image_vae_bf16.safetensors), or `_int8_convrot` | 5.6 GB | `models/VAE` |
 
-**MiniMax-H3-Image (experimental), for still images only** - from [Comfy-Org/MiniMax-H3-Image](https://huggingface.co/Comfy-Org/MiniMax-H3-Image/tree/main). In the **h3i** UI preset, select the checkpoint with **H3's text encoder** (the one above) and **its own VAE** - no video VAE, no audio VAE:
+**MiniMax-H3-Image (experimental), for still images only** - from [Comfy-Org/MiniMax-H3-Image](https://huggingface.co/Comfy-Org/MiniMax-H3-Image/tree/main). In the **h3i** UI preset, select the checkpoint with **H3's text encoder** (the one above) and **its own VAE** - no video VAE, no audio VAE. To save VRAM, P-H3-Image's text encoder (above) can replace H3's, as an experiment:
 
 | Part | File | Size | Folder |
 | :--- | :--- | :--- | :--- |

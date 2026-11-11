@@ -33,12 +33,13 @@ PH3_CFG = 1.0
 PH3_SIZE = 2048
 PH3_SIZE_OPTIONS = tuple(f"{PH3_PRESET}_{kind}_{side}" for kind in ("t2i", "i2i") for side in ("width", "height"))
 
-# MiniMax-H3-Image: Euler, 6 steps (its PDD heads), CFG 1, on its own sigma grid with no shift, so no Shift slider. It
-# works from about 4 MP and is best around 16 MP; 2048x2048 is ComfyUI's default and the largest the sliders allow
+# MiniMax-H3-Image: Euler, 8 steps on P-H3-Image's schedule, CFG 1, with no shift, so no Shift slider (aoleg's pick
+# after same-seed tests, #8); 6 steps take MiniMax's reference grid. It works from about 4 MP and is best around
+# 16 MP; 2048x2048 is ComfyUI's default and the largest the sliders allow
 H3I_PRESET = "h3i"
 H3I_SAMPLER = "Euler"
 H3I_SCHEDULER = "Simple"
-H3I_STEPS = 6
+H3I_STEPS = 8
 H3I_CFG = 1.0
 H3I_SIZE = 2048
 H3I_SIZE_OPTIONS = tuple(f"{H3I_PRESET}_{kind}_{side}" for kind in ("t2i", "i2i") for side in ("width", "height"))

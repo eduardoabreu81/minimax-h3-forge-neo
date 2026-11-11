@@ -36,7 +36,8 @@ STILL_STATUS = {
     PH3_IMAGE: ("P-H3-Image makes still images: from text, or in img2img an edit of the input image with the gallery "
                 "pictures as references. Use Euler, 8 steps and CFG 1 (the ph3 preset)."),
     H3_IMAGE: ("MiniMax-H3-Image makes still images: from text, or in img2img an edit of the input image with up to 15 "
-               "gallery pictures as references. Use Euler, 6 steps and CFG 1 (the h3i preset), at 2048x2048 or more."),
+               "gallery pictures as references. Use Euler, 8 steps and CFG 1 (the h3i preset), at 2048x2048 or more; "
+               "6 steps follow MiniMax's own grid, its reference recipe."),
 }
 NATIVE_CONTROLS = ("batch_size", "batch_count", "sampling", "scheduler", "cfg_scale")
 # Forge's InputAccordions that do nothing for H3 video, by elem_id after the tab: Hires. fix, and the Refiner when

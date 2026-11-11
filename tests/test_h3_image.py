@@ -108,7 +108,7 @@ class ComponentTests(Files, unittest.TestCase):
         cases = (
             (dit, [te, video, audio], "own image VAE"),
             (dit, [te, vae, audio], "audio VAE"),
-            (dit, [ph3_te, vae], "P-H3-Image text encoder"),
+            (dit, [te, ph3_te, vae], "Two text encoders"),
             (dit, [te, ph3_vae], "P-H3-Image VAE"),
             (dit, [vae], "H3 text encoder"),
             (dit, [te], "MiniMax-H3-Image VAE"),
@@ -119,6 +119,14 @@ class ComponentTests(Files, unittest.TestCase):
             with self.subTest(message=message, parts=[p.name for p in parts]):
                 with self.assertRaisesRegex(H3Error, message):
                     resolve_components(checkpoint_path, parts)
+
+    def test_p_h3_images_text_encoder_is_an_experiment(self):
+        # aoleg's fork (0.9.1, #8): Pruna's 4B encoder stands in for H3's 32B one in front of this checkpoint too
+        dit, vae = self.file("minimax_h3_image_pruned_int8_convrot"), self.file("minimax_h3_image_vae_fp16")
+        components = resolve_components(dit, [self.file("p-h3-image_text_encoder_bf16"), vae])
+        self.assertEqual((components.variant, components.text_encoder.role, components.experimental),
+                         (H3_IMAGE, "ph3_text_encoder", "P-H3-Image text encoder"))
+        self.assertEqual(resolve_components(dit, [self.file(H3_TE), vae]).experimental, "")
 
     def test_the_prompt_expander_is_named_as_such(self):
         # Comfy-Org's Qwen3.5 9B for ComfyUI's Generate Text node, taken for the text encoder in issue #8
@@ -417,8 +425,10 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(self.variant(image_dit, te, self.image_vae, None), H3_IMAGE)
         self.assertEqual(self.variant(h3_dit, te, object(), object()), H3)
         self.assertEqual(self.variant(h3_dit, connector, object(), None), PH3_IMAGE)
+        # P-H3-Image's text encoder in front of MiniMax-H3-Image, the experiment from aoleg's fork
+        self.assertEqual(self.variant(image_dit, connector, self.image_vae, None), H3_IMAGE)
         for args in ((image_dit, te, object(), None), (h3_dit, te, self.image_vae, None),
-                     (image_dit, connector, self.image_vae, None), (image_dit, te, self.image_vae, object())):
+                     (image_dit, te, self.image_vae, object())):
             with self.assertRaisesRegex(H3Error, "MiniMax-H3-Image components are mixed"):
                 self.variant(*args)
         self.assertIs(self.module.TEXT_ENGINES[H3_IMAGE], self.module.H3ImageTextEngine)
@@ -500,6 +510,24 @@ class H3ImageFlowTests(unittest.TestCase):
         image = self.engine.decode_first_stage(p.modified_noise)
         self.assertEqual(tuple(image.shape), (1, 3, p.height, p.width))
         self.assertIsNone(generation.waveform)
+
+    def test_other_step_counts_take_p_h3_images_schedule(self):
+        # the h3i preset's 8 steps (aoleg's same-seed tests, #8): P-H3-Image's schedule, the heads still on the grid
+        from test_flow import Txt2Img
+
+        from forge_h3.native import ph3
+        p = Txt2Img()
+        p.steps, p.sampler_name, p.cfg_scale = 8, "Euler", 1.0
+        cond = self.run_still(p)
+        schedule = p.sampler_noise_scheduler_override(8)
+        self.assertEqual(schedule.tolist(), list(torch.tensor(ph3.SIGMAS)))
+        self.assertEqual(p.extra_generation_params["H3 Sigmas"], "P-H3-Image grid")
+        dit = self.engine.forge_objects.unet.model.diffusion_model
+        self.assertEqual(dit.pdd_sigmas, self.grid)
+        for step in (0, 7):
+            out = dit(p.modified_noise, torch.tensor([schedule[step] * 1000]), cond[0].unsqueeze(0),
+                      {"sampling_sigmas": schedule})
+            self.assertTrue(torch.isfinite(out).all())
 
     def test_a_still_reserves_its_whole_sequence(self):
         # Forge's estimate from a single frame is too small next to a resident text encoder (#8, aoleg's fork)
@@ -588,7 +616,7 @@ class PresetTests(unittest.TestCase):
         importlib.import_module("forge_h3.native.presets").register()
         h3i = PresetArch["h3i"]
         self.assertEqual((forge.SAMPLERS[h3i], forge.SCHEDULERS[h3i], forge.STEPS[h3i], forge.CFG[h3i]),
-                         ("Euler", "Simple", 6, 1.0))
+                         ("Euler", "Simple", 8, 1.0))
         self.assertNotIn(h3i, forge.SHIFT)
         self.assertEqual({added[f"h3i_{k}"].default for k in ("t2i_width", "i2i_width", "t2i_height", "i2i_height")},
                          {2048})
