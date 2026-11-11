@@ -354,7 +354,7 @@ def apply() -> None:
 
         schedules.register()
     except Exception as e:
-        # MiniMax-H3-Image still samples on P-H3-Image's grid, or its own at 6 steps
+        # MiniMax-H3-Image still runs on Forge's own schedules, which follow its grid
         logger.warning(f"[MiniMax H3] could not add the H3-Image schedules: {e}")
     try:
         from . import presets

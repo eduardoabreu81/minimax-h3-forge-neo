@@ -37,9 +37,36 @@ def text_processing():
             "backend.text_processing.emphasis": emphasis, "backend.text_processing._comfy": comfy}
 
 
+def k_prediction():
+    """backend.modules.k_prediction: Forge Neo's PredictionDiscreteFlow, as far as its sigma table goes."""
+    import torch
+
+    class PredictionDiscreteFlow(torch.nn.Module):
+        def __init__(self, model_config):
+            super().__init__()
+            settings = getattr(model_config, "sampling_settings", None) or {}
+            self.shift = self.multiplier = None
+            self.set_parameters(shift=settings.get("shift", 1.0), multiplier=settings.get("multiplier", 1000))
+
+        def set_parameters(self, *, shift=None, multiplier=None, timesteps=1000):
+            self.shift = shift or self.shift
+            self.multiplier = multiplier or self.multiplier
+            self.register_buffer("sigmas", self.sigma((torch.arange(1, timesteps + 1, 1) / timesteps) * self.multiplier))
+
+    return module("backend.modules.k_prediction", PredictionDiscreteFlow=PredictionDiscreteFlow)
+
+
+def simple_schedule(predictor, n):
+    """Forge Neo's Simple schedule (modules/sd_schedulers.py simple_scheduler) on a predictor's sigma table."""
+    import torch
+    step = len(predictor.sigmas) / n
+    return torch.FloatTensor([float(predictor.sigmas[-(1 + int(x * step))]) for x in range(n)] + [0.0])
+
+
 def engine_modules():
     """Everything forge_h3.native.engine imports from Forge Neo and huggingface_guess."""
     stubs = text_processing()
+    prediction = k_prediction()
     memory = module("backend.memory_management", load_model_gpu=lambda patcher: None,
                     load_models_gpu=lambda patchers, memory_required=0: None, dtype_size=lambda dtype: 2,
                     should_use_fp16=lambda device: False, vae_device=lambda: "cpu")
@@ -51,6 +78,8 @@ def engine_modules():
         "backend": module("backend", memory_management=memory, args=stubs["backend.args"],
                           text_processing=stubs["backend.text_processing"]),
         "backend.memory_management": memory,
+        "backend.modules": module("backend.modules", k_prediction=prediction),
+        "backend.modules.k_prediction": prediction,
         "backend.diffusion_engine": module("backend.diffusion_engine", base=base),
         "backend.diffusion_engine.base": base,
         "backend.patcher": module("backend.patcher"),

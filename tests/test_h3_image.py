@@ -280,18 +280,32 @@ class NativeTests(unittest.TestCase):
             vae.decode(latent.repeat(1, 1, 2, 1, 1))
 
     def test_sigma_grid(self):
-        from forge_h3.native.h3_image import PDD_SIGMAS, STEPS, sigmas
+        # Forge's own schedules on the checkpoint's grid, as ComfyUI's MiniMaxH3ImageModelSampling (aoleg's fork, #8)
+        from forge_h3.native.h3_image import PDD_SIGMAS, STEPS
         self.assertEqual((STEPS, PDD_SIGMAS), (6, GRID))
-        self.assertEqual(sigmas(6).tolist(), list(torch.tensor(GRID, dtype=torch.float32)))
+        prediction = forge_stubs.k_prediction()
+        with patch.dict(sys.modules, {"backend.modules.k_prediction": prediction,
+                                      "backend.modules": forge_stubs.module("backend.modules", k_prediction=prediction)}):
+            sys.modules.pop("forge_h3.native.sampling", None)
+            from forge_h3.native.sampling import PredictionH3Image
+            predictor = PredictionH3Image(types.SimpleNamespace(sampling_settings={}), GRID)
+        sys.modules.pop("forge_h3.native.sampling", None)
+        # Simple at the grid's step count gives the grid exactly (snapped), and other counts the same curve
+        self.assertEqual(forge_stubs.simple_schedule(predictor, 6).tolist(), list(torch.tensor(GRID)))
         for steps in (3, 8, 12):
-            grid = sigmas(steps)
-            self.assertEqual(len(grid), steps + 1)
-            self.assertEqual((float(grid[0]), float(grid[-1])), (1.0, 0.0))
-            self.assertTrue(bool((grid[1:] < grid[:-1]).all()))
-        self.assertTrue(torch.allclose(sigmas(12)[::2], sigmas(6)))
+            sigmas = forge_stubs.simple_schedule(predictor, steps)
+            self.assertEqual(len(sigmas), steps + 1)
+            self.assertAlmostEqual(float(sigmas[0]), 1.0, places=6)
+            self.assertTrue(bool((sigmas[1:] < sigmas[:-1]).all()))
+            self.assertGreater(float(sigmas[-2]), 0.0)
+        # the table never snaps onto sigma 0 (Normal would reach it before its last step)
+        self.assertGreater(float(predictor.sigmas[0]), 0.0)
+        self.assertEqual((predictor.percent_to_sigma(0.0), predictor.percent_to_sigma(1.0)), (1.0, 0.0))
+        self.assertAlmostEqual(predictor.percent_to_sigma(0.5), 0.75, places=6)
         # a file's own grid is followed
         other = (1.0, 0.6, 0.0)
-        self.assertEqual(sigmas(2, other).tolist(), list(torch.tensor(other)))
+        predictor.set_grid(other)
+        self.assertEqual(forge_stubs.simple_schedule(predictor, 2).tolist(), list(torch.tensor(other)))
 
     def test_reference_and_vision_sizes(self):
         from forge_h3.native.h3_image import (
@@ -453,8 +467,9 @@ class H3ImageFlowTests(unittest.TestCase):
         stubs = {**forge_stubs.engine_modules(), **forge_modules(root, files)}
         self.enterContext(patch.dict(sys.modules, stubs))
         for name in ("forge_h3.native.engine", "forge_h3.native.model", "forge_h3.native.text_engine",
-                     "forge_h3.native.presets"):
+                     "forge_h3.native.presets", "forge_h3.native.sampling"):
             sys.modules.pop(name, None)
+        self.addCleanup(sys.modules.pop, "forge_h3.native.sampling", None)
         self.enterContext(patch.object(integration, "find_ffmpeg"))
         self.addCleanup(set_pending_error, None)
         self.engine = self.make_engine()
@@ -464,11 +479,12 @@ class H3ImageFlowTests(unittest.TestCase):
 
         from forge_h3.native.engine import MiniMaxH3Engine
         engine = object.__new__(MiniMaxH3Engine)
+        engine.variant = H3_IMAGE
+        predictor = engine._h3_predictor(types.SimpleNamespace(sampling_settings={}, unet_config={}))
         engine.forge_objects = types.SimpleNamespace(
             vae=types.SimpleNamespace(patcher=None, device="cpu", vae_dtype=torch.float32, first_stage_model=toy_vae()),
             unet=FakeUnetPatcher(types.SimpleNamespace(
-                diffusion_model=tiny_image_dit(), predictor=types.SimpleNamespace(percent_to_sigma=lambda percent: 1.0 - percent),
-                memory_required=forge_memory_estimate)),
+                diffusion_model=tiny_image_dit(), predictor=predictor, memory_required=forge_memory_estimate)),
             clip=types.SimpleNamespace(patcher=None))
         engine.variant, engine.audio_vae = H3_IMAGE, None
         engine.text_processing_engine_h3 = FakeTextEngine()
@@ -489,15 +505,17 @@ class H3ImageFlowTests(unittest.TestCase):
     def test_text_to_image(self):
         from test_flow import Txt2Img
         p = Txt2Img()
-        p.distilled_cfg_scale, p.steps, p.sampler_name, p.cfg_scale = 12.0, 6, "Euler", 1.0
+        p.distilled_cfg_scale, p.steps, p.sampler_name, p.cfg_scale, p.scheduler = 12.0, 6, "Euler", 1.0, "Simple"
         cond = self.run_still(p)
         request = p.h3_request
         self.assertEqual((request.variant, request.mode, request.frames, request.audio_shift), (H3_IMAGE, "fl2va", 1, 1.0))
         self.assertEqual(p.distilled_cfg_scale, 1.0)
-        schedule = p.sampler_noise_scheduler_override(6)
+        # MiniMax's reference recipe: Simple at 6 steps lands on the grid the file declares
+        self.assertIsNone(getattr(p, "sampler_noise_scheduler_override", None))
+        schedule = forge_stubs.simple_schedule(self.engine.forge_objects.unet.model.predictor, 6)
         self.assertEqual(schedule.tolist(), list(torch.tensor(self.grid)))
-        self.assertEqual((p.extra_generation_params["H3 Variant"], p.extra_generation_params["H3 Sigmas"]),
-                         ("MiniMax-H3-Image", "MiniMax-H3-Image grid"))
+        self.assertEqual(p.extra_generation_params["H3 Variant"], "MiniMax-H3-Image")
+        self.assertNotIn("H3 Sigmas", p.extra_generation_params)
         self.assertNotIn("H3 Audio shift", p.extra_generation_params)
         dit = self.engine.forge_objects.unet.model.diffusion_model
         self.assertEqual(dit.pdd_sigmas, self.grid)
@@ -511,17 +529,16 @@ class H3ImageFlowTests(unittest.TestCase):
         self.assertEqual(tuple(image.shape), (1, 3, p.height, p.width))
         self.assertIsNone(generation.waveform)
 
-    def test_other_step_counts_take_p_h3_images_schedule(self):
-        # the h3i preset's 8 steps (aoleg's same-seed tests, #8): P-H3-Image's schedule, the heads still on the grid
+    def test_forge_schedules_follow_the_grid_at_any_step_count(self):
+        # every Schedule type is the user's to pick (#8); Forge's own read the table, which follows the grid
         from test_flow import Txt2Img
-
-        from forge_h3.native import ph3
         p = Txt2Img()
-        p.steps, p.sampler_name, p.cfg_scale = 8, "Euler", 1.0
+        p.steps, p.sampler_name, p.cfg_scale, p.scheduler = 8, "Euler", 1.0, "Simple"
         cond = self.run_still(p)
-        schedule = p.sampler_noise_scheduler_override(8)
-        self.assertEqual(schedule.tolist(), list(torch.tensor(ph3.SIGMAS)))
-        self.assertEqual(p.extra_generation_params["H3 Sigmas"], "P-H3-Image grid")
+        self.assertIsNone(getattr(p, "sampler_noise_scheduler_override", None))
+        schedule = forge_stubs.simple_schedule(self.engine.forge_objects.unet.model.predictor, 8)
+        self.assertAlmostEqual(float(schedule[0]), 1.0, places=6)
+        self.assertTrue(bool((schedule[1:] < schedule[:-1]).all()))
         dit = self.engine.forge_objects.unet.model.diffusion_model
         self.assertEqual(dit.pdd_sigmas, self.grid)
         for step in (0, 7):
@@ -541,16 +558,6 @@ class H3ImageFlowTests(unittest.TestCase):
             self.assertNotIn("H3 Sigmas", p.extra_generation_params)
             self.assertEqual(p.extra_generation_params["H3 Variant"], "MiniMax-H3-Image")
             self.assertEqual(self.engine.forge_objects.unet.model.diffusion_model.pdd_sigmas, self.grid)
-
-    def test_forge_schedules_keep_the_grids(self):
-        from test_flow import Txt2Img
-
-        from forge_h3.native import ph3
-        p = Txt2Img()
-        p.steps, p.sampler_name, p.cfg_scale, p.scheduler = 8, "Euler", 1.0, "Simple"
-        self.run_still(p)
-        self.assertEqual(p.sampler_noise_scheduler_override(8).tolist(), list(torch.tensor(ph3.SIGMAS)))
-        self.assertEqual(p.extra_generation_params["H3 Sigmas"], "P-H3-Image grid")
 
     def test_a_still_reserves_its_whole_sequence(self):
         # Forge's estimate from a single frame is too small next to a resident text encoder (#8, aoleg's fork)

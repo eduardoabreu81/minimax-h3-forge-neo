@@ -472,43 +472,30 @@ def _use_h3_image_sampling(p, engine):
     """MiniMax-H3-Image samples with no shift, and its PDD heads follow the sigma grid they were distilled on (from the
     checkpoint's metadata, MiniMax's published one when the file has none), whatever the schedule.
 
-    The H3-Image schedules (native/schedules.py, aoleg's same-seed tests in #8) run as Forge runs any schedule; they all
-    end their last model evaluation at sigma 0.42 or above, where the picture comes out clean. Forge's own schedules
-    are not used: at the grid's step count (6) the schedule is the grid itself, MiniMax's reference recipe (ComfyUI's
-    MiniMaxH3ImageModelSampling), whose last step at sigma 0.232 leaves speckle; at any other count it is P-H3-Image's
-    grid."""
-    from .native import h3_image, ph3, schedules
+    Every Schedule type runs as Forge runs it. The H3-Image schedules (native/schedules.py, aoleg's same-seed tests in
+    #8) end their last model evaluation at sigma 0.42 or above, where the picture comes out clean. Forge's own
+    schedules read the sigma table, which follows the grid (native/sampling.py), as ComfyUI's
+    MiniMaxH3ImageModelSampling does: Simple at 6 steps is MiniMax's reference recipe, whose last step at sigma 0.232
+    left speckle in those tests."""
+    from .native import h3_image, schedules
     path = getattr(p, "h3_checkpoint", None)
     grid = (image_grid(path) if path else None) or h3_image.PDD_SIGMAS
     engine.set_image_grid(grid)
-    reference_steps = len(grid) - 1
-    steps = getattr(p, "steps", ph3.STEPS)
-    schedule = schedules.find(getattr(p, "scheduler", None))
+    scheduler = getattr(p, "scheduler", None)
+    schedule = schedules.find(scheduler)
     p.extra_generation_params["H3 Variant"] = "MiniMax-H3-Image"
     if getattr(p, "h3_experimental", ""):
         p.extra_generation_params["H3 Experimental"] = p.h3_experimental
     advice = []
-    if schedule is not None:
-        # Forge calls it and writes it to the infotext as the Schedule type
-        name = schedule[1]
-        print(f"[MiniMax H3] MiniMax-H3-Image samples on the {name} schedule with no shift")
-    else:
-        reference = steps == reference_steps
-        p.sampler_noise_scheduler_override = ((lambda n: h3_image.sigmas(n, grid)) if reference else ph3.sigmas)
-        name = "MiniMax-H3-Image grid" if reference else "P-H3-Image grid"
-        p.extra_generation_params["H3 Sigmas"] = name
-        if not reference and steps != ph3.STEPS:
-            advice.append(f"{ph3.STEPS} steps on P-H3-Image's schedule, or {reference_steps} on its own grid")
+    if schedule is None:
+        advice.append(f"an H3-Image schedule ({scheduler} follows the checkpoint's own grid)")
     if getattr(p, "sampler_name", "Euler") not in ("Euler", "Heun"):
         advice.append("the Euler or Heun sampler")
     if getattr(p, "cfg_scale", 1.0) != 1.0:
         advice.append("CFG 1 (it is distilled without guidance)")
+    name = schedule[1] if schedule is not None else scheduler
     note = f"; it is made for {', '.join(advice)}" if advice else ""
-    if schedule is None:
-        print(f"[MiniMax H3] MiniMax-H3-Image samples on the {name} with no shift (Schedule type {getattr(p, 'scheduler', '')!r} "
-              f"is not used: pick an H3-Image schedule, or {reference_steps} steps for MiniMax's own grid){note}")
-    elif advice:
-        print(f"[MiniMax H3] MiniMax-H3-Image is made for {', '.join(advice)}")
+    print(f"[MiniMax H3] MiniMax-H3-Image samples on the {name} schedule with no shift{note}")
     size = h3_image.size_advice(p.width, p.height)
     if size:
         print(f"[MiniMax H3] {size}")

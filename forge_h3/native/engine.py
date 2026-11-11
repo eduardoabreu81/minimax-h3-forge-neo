@@ -138,7 +138,7 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         self.audio_vae = VAE(model=pair.audio, dtype=torch.float32) if pair.audio is not None else None
 
         unet = UnetPatcher.from_model(model=huggingface_components["transformer"], diffusers_scheduler=None,
-                                      k_predictor=self._get_predictor(), config=estimated_config)
+                                      k_predictor=self._h3_predictor(estimated_config), config=estimated_config)
 
         self.text_processing_engine_h3 = TEXT_ENGINES[self.variant](text_encoder=clip.cond_stage_model.qwen3vl_32b,
                                                                     tokenizer=clip.tokenizer.qwen3vl_32b)
@@ -174,6 +174,15 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         # (path, ModelPatcher), kept between generations
         self.controls = []
         self.control_model = None
+
+    def _h3_predictor(self, estimated_config):
+        """MiniMax-H3-Image samples on the sigma grid its output heads were distilled on (sampling.py), so Forge's own
+        schedules follow it as in ComfyUI; the others on Forge's shifted flow schedule."""
+        if self.variant != H3_IMAGE:
+            return self._get_predictor()
+        from .sampling import PredictionH3Image
+        config = getattr(estimated_config, "unet_config", None) or {}
+        return PredictionH3Image(estimated_config, config.get("pdd_sigmas") or h3_image.PDD_SIGMAS)
 
     def set_keyframes(self, last_frame: torch.Tensor | None = None) -> None:
         """Called by the script for every FL2VA generation, before Forge's img2img init brings the first frame."""
@@ -239,8 +248,11 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
 
     def set_image_grid(self, grid) -> None:
         """MiniMax-H3-Image: the sigma grid the selected file declares for its PDD heads (integration.py reads it from
-        the file header, which Forge's loader does not pass on)."""
-        self.forge_objects.unet.model.diffusion_model.pdd_sigmas = tuple(float(s) for s in grid)
+        the file header, which Forge's loader does not pass on); the sigma table follows it."""
+        model = self.forge_objects.unet.model
+        model.diffusion_model.pdd_sigmas = tuple(float(s) for s in grid)
+        if hasattr(model.predictor, "set_grid"):
+            model.predictor.set_grid(grid)
 
     def pdd_heads(self) -> int:
         """The PDD heads this generation's LoRAs give the DiT's output projection (alibaba-pai's Acc LoRAs in Kijai's

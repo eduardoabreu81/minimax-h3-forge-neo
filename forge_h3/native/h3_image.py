@@ -40,17 +40,6 @@ DECODER_WIDTH = 16 * 64
 DECODER_LAYERS = 24
 
 
-def sigmas(steps: int, grid=PDD_SIGMAS) -> torch.Tensor:
-    """The checkpoint's grid for Forge's sampler: exact at its own step count, otherwise read off the same curve, linear in
-    the grid index, as ComfyUI's MiniMaxH3ImageModelSampling does for the stock schedulers."""
-    steps = max(1, int(steps))
-    if steps == len(grid) - 1:
-        return torch.tensor(grid, dtype=torch.float32)
-    index = np.linspace(0.0, 1.0, len(grid))
-    t = np.linspace(1.0, 0.0, steps + 1)
-    return torch.tensor(np.interp(t, index, grid[::-1]), dtype=torch.float32)
-
-
 def size_short_edge(width: int, height: int, low: int, high: int) -> tuple[int, int]:
     """Aspect-preserving scale that puts the short edge inside [low, high], sides rounded to 32 (ComfyUI _size_short_edge)."""
     scale = min(max(min(width, height), low), high) / min(width, height)
