@@ -65,6 +65,13 @@ class Script(scripts.Script):
 def settings():
     section = ("forge_h3", "MiniMax H3")
     shared.opts.add_option("h3_ffmpeg_path", shared.OptionInfo("", "H3 FFmpeg executable (empty = automatic)", section=section))
+    import gradio as gr
+
+    shared.opts.add_option(integration.OUTPUT_SCALE_SETTING,
+                           shared.OptionInfo("1", "[H3] Output scale", gr.Radio,
+                                             {"choices": list(integration.OUTPUT_SCALES)}, section=section)
+                           .info("still images only: shrinks the decoded picture with an exact area filter, for less "
+                                 "pixel-level grit; from 16 MP, 3/4 gives 9 MP, 2/3 gives 7 MP, 1/2 gives 4 MP"))
 
 
 script_callbacks.on_ui_settings(settings)

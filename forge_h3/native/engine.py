@@ -9,6 +9,7 @@ frames and the waveform for the script, and hands Forge the first frame.
 
 import math
 import os
+from fractions import Fraction
 
 import torch
 from backend import memory_management
@@ -27,6 +28,7 @@ from ..contracts import (
     H3Error,
     raise_pending_error,
 )
+from ..resize import area_resize
 from . import dit, fun_control, h3_image, ph3
 from .layout import FRAME_RESCALE, prompt_memory
 from .model import AUDIO_SHIFT, VIDEO_SHIFT, MiniMaxH3
@@ -156,6 +158,8 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         if self.variant in STILL_VARIANTS:
             self.video_shift = self.audio_shift = ph3.SHIFT
         self.generation: Generation | None = None
+        # the [H3] Output scale setting: the fraction of each side of a decoded still that is kept (area filter)
+        self.output_scale = Fraction(1)
 
         # FL2VA keyframes, (1, H, W, 3) in [0, 1] at the output size: the first frame comes from img2img's input image
         # (encode_first_stage, during Forge's img2img init), the last one from the script; both cleared per generation
@@ -241,6 +245,13 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         super().set_shift(shift)
         self.video_shift = shift
         self.forge_objects.unet.model.diffusion_model.sigma_shift_video = shift
+
+    def set_output_scale(self, scale) -> None:
+        """Called by the script for every generation: 1 keeps the decoded still; 3/4, 2/3, 1/2 or 1/4 shrinks each side
+        to that fraction with an exact area filter (resize.area_resize), which averages away the pixel-level texture
+        the 16x decoder invents. A side that does not divide is rounded to the nearest pixel (2/3 of 4096 is 2731).
+        From aoleg's fork (0.13.0, 0.13.1)."""
+        self.output_scale = min(Fraction(scale), Fraction(1))
 
     def set_audio_shift(self, shift: float) -> None:
         """The audio stream's flow shift (ComfyUI's ModelSamplingMiniMaxH3 shift_audio); set for every H3 generation."""
@@ -441,7 +452,11 @@ class MiniMaxH3Engine(ForgeDiffusionEngine):
         if not finite(pixels):
             advice = " Start Forge Neo with --fp32-vae." if video_vae.vae_dtype != torch.float32 else ""
             raise H3Error(f"The H3 video VAE produced NaN or Inf values: the video would come out black.{advice}")
-        generation.frames = pixels[0].float().cpu().movedim(1, 0)
+        frames = pixels[0].float()
+        if generation.shapes.video[2] == 1 and self.output_scale < 1:
+            # on the VAE's device: a 16 MP still is two small matrix products there
+            frames = area_resize(frames, self.output_scale)
+        generation.frames = frames.cpu().movedim(1, 0)
 
         # a single-frame still has no soundtrack to write
         if generation.shapes.video[2] > 1 and self.audio_vae is not None:

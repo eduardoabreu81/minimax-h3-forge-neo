@@ -6,6 +6,7 @@ Frames control into H3's length, give the sampler the packed video+audio noise, 
 
 import json
 import uuid
+from fractions import Fraction
 from pathlib import Path
 
 from . import keyframes, references
@@ -76,8 +77,25 @@ def validate_processing(p):
     if (getattr(p, "subseed_strength", 0) > 0 or getattr(p, "seed_resize_from_w", -1) > 0
             or getattr(p, "seed_resize_from_h", -1) > 0):
         raise H3Error("Disable variation seed and seed resize for H3.")
-    if getattr(p, "script_args", ()) and p.script_args[0] not in (0, None, "None"):
-        raise H3Error("Select Script: None for H3 generation. Script combinations are not validated yet.")
+
+
+def script_selected(p) -> bool:
+    """A script from Forge's Script dropdown (X/Y/Z plot, Prompts from file...): its index comes first."""
+    return bool(getattr(p, "script_args", ())) and p.script_args[0] not in (0, None, "None")
+
+
+OUTPUT_SCALE_SETTING = "h3_output_scale"
+# the setting's choices and the fraction of each side of a still that is kept
+OUTPUT_SCALES = {"1": Fraction(1), "3/4": Fraction(3, 4), "2/3": Fraction(2, 3), "1/2": Fraction(1, 2),
+                 "1/4": Fraction(1, 4)}
+
+
+def output_scale() -> tuple[str, Fraction]:
+    """The [H3] Output scale setting (aoleg's fork, 0.13.1): its label and the fraction of each side of a decoded still
+    that is kept."""
+    from modules import shared
+    label = str(getattr(shared.opts, OUTPUT_SCALE_SETTING, "1"))
+    return (label, OUTPUT_SCALES[label]) if label in OUTPUT_SCALES else ("1", Fraction(1))
 
 
 CONTROL_DEFAULTS = {"strength": 1.0, "start": 0.0, "end": 1.0}
@@ -289,6 +307,11 @@ def _before_process(p, output, include_audio, audio_shift, ref_audios=(), ref_vi
         if any(ref_audios or ()) or any(ref_videos or ()) or any(ref_media or ()):
             raise H3Error(f"{name} takes pictures only: remove the reference audio and videos.")
         mode = "fl2va"
+    if not still and script_selected(p):
+        # each script run is a plain Forge generation that passes the checks above (aoleg's fork, 0.12.2); with video
+        # the MP4 and its soundtrack are written per run, a combination not validated yet
+        raise H3Error("Forge's scripts (X/Y/Z plot, Prompts from file...) work with H3 still images. "
+                      "For video, select Script: None.")
     if still and mode == "fl2va" and (is_img2img or references.collect(p, is_img2img, limit)):
         # editing a still conditions on the pictures as references, with any H3 checkpoint (ComfyUI's
         # MiniMaxH3ReferenceToVideo in Fizgig H3 Still's edit workflow); audio and video references stay Ref2VA's
@@ -419,6 +442,11 @@ def process(p):
     if getattr(p, "h3_soundtrack", None) is not None:
         p.extra_generation_params["H3 Soundtrack"] = p.h3_soundtrack_choice
     engine.set_audio_shift(request.audio_shift)
+    # [H3] Output scale shrinks stills only; a video keeps its size
+    scale_label, scale = output_scale() if request.frames == 1 else ("1", Fraction(1))
+    engine.set_output_scale(scale)
+    if scale < 1:
+        p.extra_generation_params["H3 Output scale"] = scale_label
     p.extra_generation_params.update({"H3 Variant": "FastH3"} if getattr(p, "h3_fast", False) else {})
     if request.variant == PH3_IMAGE:
         _use_ph3_sampling(p)

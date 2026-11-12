@@ -782,6 +782,48 @@ class FlowTests(unittest.TestCase):
         self.assertEqual(generation.frames.shape[0], 1)
         self.assertIsNone(generation.waveform)
 
+    def test_output_scale_shrinks_a_still_with_an_area_filter(self):
+        from fractions import Fraction
+        opts = sys.modules["modules.shared"].opts
+        opts.h3_output_scale = "1/2"
+        self.addCleanup(delattr, opts, "h3_output_scale")
+        p = Txt2Img()
+        integration.before_process(p, "Still image", True)
+        p.sd_model = self.engine
+        integration.process(p)
+        integration.before_sampling(p, torch.zeros(1, 4, HEIGHT // 8, WIDTH // 8))
+        self.assertEqual((self.engine.output_scale, p.extra_generation_params["H3 Output scale"]), (Fraction(1, 2), "1/2"))
+        image = self.engine.decode_first_stage(p.modified_noise)
+        self.assertEqual(tuple(image.shape), (1, 3, HEIGHT // 2, WIDTH // 2))
+        # each output pixel is the mean of a 2x2 block of the full decode
+        self.engine.set_output_scale(1)
+        full = self.engine.decode_first_stage(p.modified_noise)
+        torch.testing.assert_close(image, torch.nn.functional.avg_pool2d(full, 2), rtol=0, atol=1e-5)
+        self.engine.set_output_scale(Fraction(3, 4))
+        image = self.engine.decode_first_stage(p.modified_noise)
+        self.assertEqual(tuple(image.shape), (1, 3, round(HEIGHT * 3 / 4), round(WIDTH * 3 / 4)))
+        # a video keeps its size, and an unknown value falls back to 1; neither leaves an infotext
+        for output, value in (("Video", "1/2"), ("Still image", "5/6")):
+            with self.subTest(output=output, value=value):
+                opts.h3_output_scale = value
+                p = Txt2Img()
+                integration.before_process(p, output, True)
+                p.sd_model = self.engine
+                integration.process(p)
+                self.assertEqual(self.engine.output_scale, 1)
+                self.assertNotIn("H3 Output scale", p.extra_generation_params)
+
+    def test_forge_scripts_run_with_stills_and_are_refused_with_video(self):
+        # X/Y/Z plot, Prompts from file: Forge's Script dropdown sends the script's index first
+        p = Txt2Img()
+        p.script_args = [3] + p.script_args[1:]
+        integration.before_process(p, "Still image", True)
+        self.assertIsNotNone(p.h3_request)
+        p = Txt2Img()
+        p.script_args = [3] + p.script_args[1:]
+        with self.assertRaisesRegex(H3Error, "For video, select Script: None"):
+            integration.before_process(p, "Video", True)
+
     def test_still_image_edits_with_an_fl2va_checkpoint(self):
         p = Img2Img(gallery=Image.new("RGB", (300, 100), "blue"))
         integration.before_process(p, "Still image", True)

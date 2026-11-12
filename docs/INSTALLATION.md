@@ -116,7 +116,7 @@ MiniMaxAI's MiniMax-H3-Image is the image model of the H3 family: H3's DiT witho
 | `The img2img input image did not reach H3` | Set **Settings → VAE → VAE for Encoding** to **Full** and check the console for an earlier error. |
 | The process is killed while loading H3 or adding a LoRA | Not enough system RAM. Close other programs, restart Forge before changing the text encoder, and for long clips with a LoRA set **Diffusion in Low Bits** to **Automatic (fp16 LoRA)**. |
 | `FFmpeg is missing` / `H3 FFmpeg executable does not exist` | The automatic install did not work (the console says why at startup). Restart Forge with internet access, install FFmpeg, or set the full path of the executable in **Settings → MiniMax H3**. |
-| `Select Script: None for H3 generation` | Generation scripts are not supported with H3 yet. |
+| `For video, select Script: None` | Forge's scripts (X/Y/Z plot, Prompts from file...) work with H3 still images only for now. |
 
 Report other errors on the [issue tracker](https://github.com/eduardoabreu81/minimax-h3-forge-neo/issues) with the console output.
 
