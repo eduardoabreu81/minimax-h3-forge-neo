@@ -3,7 +3,7 @@
 <div align="center">
 
 [![Forge Neo](https://img.shields.io/badge/Forge-Neo-blue)](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)
-[![Version](https://img.shields.io/badge/Version-0.8.0-brightgreen)](https://github.com/eduardoabreu81/minimax-h3-forge-neo)
+[![Version](https://img.shields.io/badge/Version-0.9.0-brightgreen)](https://github.com/eduardoabreu81/minimax-h3-forge-neo)
 ![Status](https://img.shields.io/badge/Status-Work_in_progress-orange)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-green)](LICENSE)
 
@@ -44,7 +44,13 @@ Generate **videos with sound** with **[MiniMax H3](https://github.com/MiniMax-AI
 
 ### v0.9.0 - MiniMax-H3-Image
 
-- **[MiniMax-H3-Image](https://huggingface.co/MiniMaxAI/MiniMax-H3-Image)**, MiniMax's own image model of the H3 family - stills from text, or edits of a picture with up to 15 more as references, in 8 steps. It uses **H3's text encoder** (the file you already have) with its own checkpoint and VAE, and no audio VAE. P-H3-Image's much smaller text encoder works too, as an experiment (thanks to [aoleg](https://github.com/aoleg) for the tests and the 8-step recipe). Select its files and the extension recognizes it; H3 and P-H3-Image work as before. A new **h3i** UI preset keeps its files and settings. **Experimental:** checked on the CPU against the published files and against ComfyUI's code, not yet run on a GPU
+- **Works with the latest Forge Neo again** - its GGUF update (November 14) changed how extra VAE and text encoder files are loaded, and every generation stopped with `replace_state_dict() takes 4 positional arguments but 5 were given` ([#10](https://github.com/eduardoabreu81/minimax-h3-forge-neo/issues/10)). The extension now works with Forge Neo from before and after that update
+- **[MiniMax-H3-Image](https://huggingface.co/MiniMaxAI/MiniMax-H3-Image)**, MiniMax's own image model of the H3 family ([#8](https://github.com/eduardoabreu81/minimax-h3-forge-neo/issues/8)) - detailed stills from text, or edits of a picture with up to 15 more as references. It uses **H3's text encoder** (the file you already have) with its own checkpoint and VAE, and no audio VAE. Select its files and the extension recognizes it; H3 and P-H3-Image work as before. A new **h3i** UI preset keeps its files and settings
+- **The H3-Image LCM sampler** on Simple at 6 steps is the h3i default, and the **H3-Image 8-step**, **H3-Image 8-step softer**, **H3-Image 6-step** and **P-H3-Image** schedules are in the Schedule type list for Euler and Heun; Forge's own schedules follow the model's grid too. Thanks to [aoleg](https://github.com/aoleg) for the tests and the schedules
+- **Less VRAM:** P-H3-Image's text encoder (about 5 GB) can take the place of H3's 32B one in front of MiniMax-H3-Image, and P-H3-Image's VAE the place of its own. Both are experiments, marked as such in the console and the infotext
+- **Settings → MiniMax H3 → [H3] Output scale** shrinks still images (3/4, 2/3, 1/2, 1/4), and Forge's own scripts (X/Y/Z plot, Prompts from file) work with stills
+- **Fixes:** the ER SDE and DPM++ SDE samplers no longer turn out NaN; stills keep enough VRAM free for sampling and decoding; a replaced H3 model frees its pinned memory
+- **Checked on a GPU** (RTX 6000 Ada, 48 GB): MiniMax-H3-Image up to 3872x2176, P-H3-Image up to 2912x2912, H3's Still image, text to image and edits with all three. P-H3-Image edits follow a detailed instruction better than a short one: with a short one it can return the picture with more contrast and the change left out, as PrunaAI's own ComfyUI workflow does
 
 ### v0.8.0 - Still Images and P-H3-Image
 
@@ -187,9 +193,9 @@ Every prompt, the exact settings and the generation times - plus more clips, Fas
 ### 🖼️ MiniMax-H3-Image (Experimental)
 
 - MiniMax's **image model** of the H3 family: detailed stills from about 4 to 20 megapixels, from text or edited from pictures
-- Pick the **h3i** UI preset (Euler, 8 steps, CFG 1, 2048x2048), then its checkpoint, **H3's text encoder** and **its own VAE** - no video VAE, no audio VAE
+- Pick the **h3i** UI preset (H3-Image LCM, Simple, 6 steps, CFG 1, 2048x2048), then its checkpoint, **H3's text encoder** and **its own VAE** - no video VAE, no audio VAE
 - **Less VRAM:** P-H3-Image's text encoder (about 5 GB instead of 15 GB) can take the place of H3's. It is an experiment: the model was not released with it, but it gives good results in tests
-- The extension recognizes it from the files and sets **Output** to **Still image** by itself. 8 steps give the cleanest pictures; 6 steps follow MiniMax's own recipe, if you want to compare
+- The extension recognizes it from the files and sets **Output** to **Still image** by itself. Euler at 8 steps on the **H3-Image 8-step** schedule is a good alternative, a little closer to long prompts in our tests; Euler on Simple leaves grain
 - **Bigger is better:** 2048x2048 is the smallest size it is made for, and MiniMax gets its best results around 4096x4096
 - **Editing** in img2img: the input image is `<Picture 1>`, the ImageStitch gallery the next ones, up to 16 in all. Name them in the prompt: "put the hat from `<Picture 2>` on the man in `<Picture 1>`"
 - It follows **long, detailed English descriptions** of the whole picture best. MiniMax's prompt expander is not included: write the detailed prompt yourself, or let another LLM expand it
