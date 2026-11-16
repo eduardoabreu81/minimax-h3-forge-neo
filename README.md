@@ -1,3 +1,7 @@
+<p align="center">
+  <img src=".github/banner.jpg" alt="MiniMax H3 for Forge Neo banner"/>
+</p>
+
 # 🎬 MiniMax H3 for Forge Neo
 
 <div align="center">
