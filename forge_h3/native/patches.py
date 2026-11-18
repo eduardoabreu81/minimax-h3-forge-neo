@@ -84,9 +84,12 @@ def _replace(sd: dict, prefix: str, asd: dict) -> None:
 def _hook_replace_state_dict() -> None:
     original = loader.replace_state_dict
 
-    def replace_state_dict(sd: dict, asd: dict, guess, path):
+    def replace_state_dict(sd: dict, asd: dict, *rest):
+        # Forge Neo added `metadata` before `guess` (sd, asd, metadata, guess, path); older builds pass (sd, asd, guess, path).
+        # `guess` and `path` are the last two either way, so forward everything untouched.
+        guess = rest[-2]
         if not isinstance(guess, model.MiniMaxH3):
-            return original(sd, asd, guess, path)
+            return original(sd, asd, *rest)
         # P-H3-Image's text encoder and VAE first: its VAE also has every key H3's video VAE is recognized by
         if ph3.is_text_encoder(asd):
             _replace(sd, f"{guess.text_encoder_key_prefix[0]}{TE_PREFIX}", ph3.convert_text_encoder(asd))
@@ -99,7 +102,7 @@ def _hook_replace_state_dict() -> None:
         elif vae.is_audio_vae(asd):
             _replace(sd, f"{guess.vae_key_prefix[0]}audio.", vae.convert_audio_vae(asd))
         else:
-            return original(sd, asd, guess, path)
+            return original(sd, asd, *rest)
         return sd
 
     loader.replace_state_dict = replace_state_dict
