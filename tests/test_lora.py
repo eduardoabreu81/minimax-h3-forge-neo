@@ -1,5 +1,6 @@
 """On-the-fly LoRAs as low-rank terms on the INT8 layers (native/lora.py), with stand-ins for Forge Neo's pieces."""
 
+import types
 import unittest
 
 try:
@@ -30,6 +31,20 @@ class OnlineLoRAPatch:
         up, down, alpha = adapter.weights[:3]
         scale = strength * (alpha / down.shape[0] if alpha is not None else 1.0)
         return weight * strength_model + scale * up @ down
+
+
+class LowVramPatch:
+    """Forge's LowVramPatch: on an offloaded layer, merges every patch the model's table holds for its key."""
+
+    def __init__(self, key, patches):
+        self.key, self.patches = key, patches
+
+    def __call__(self, weight):
+        for strength, adapter, strength_model, _, _ in self.patches[self.key]:
+            up, down, alpha = adapter.weights[:3]
+            scale = strength * (alpha / down.shape[0] if alpha is not None else 1.0)
+            weight = weight * strength_model + scale * up @ down
+        return weight
 
 
 if torch is not None:
@@ -114,6 +129,66 @@ class LowRankTests(unittest.TestCase):
         layer.weight_function, layer.bias_function = [self.lora(8, 32)], []
         with lora.low_rank(nn.Sequential(layer)) as moved:
             self.assertEqual(moved, 0)
+
+    def low_vram(self, key, *entries):
+        # entries: (adapter kwargs, strength) per LoRA, as add_patches stores them in the model's patch table
+        patches = {key: []}
+        for adapter, strength in entries:
+            n_out, n_in = adapter.pop("shape")
+            up, down = torch.randn(n_out, 4), torch.randn(4, n_in)
+            patches[key].append((strength, Adapter(up, down, **adapter), 1.0, None, None))
+        return LowVramPatch(key, patches)
+
+    def test_offloaded_layers_keep_the_quantized_path_too(self):
+        # Never OOM's "always offload" (or a partial load) leaves a LowVramPatch on every LoRA-patched layer
+        first, second = self.model[0], self.model[2]
+        first.weight_function = [self.low_vram("0.weight", ({"shape": (48, 32), "alpha": 8.0}, 0.7), ({"shape": (48, 32)}, 1.0))]
+        second.weight_function = [self.low_vram("2.weight", ({"shape": (16, 48)}, 1.0))]
+        merged, low_rank, moved = self.run_both()
+        self.assertEqual(moved, 2)
+        self.assertTrue(torch.allclose(merged, low_rank, atol=1e-4), float((merged - low_rank).abs().max()))
+        self.assertEqual((first.int8_calls, second.int8_calls), (1, 1))
+
+    def test_offloaded_layers_with_other_patches_stay_on_forges_path(self):
+        first = self.model[0]
+        patch = self.low_vram("0.weight", ({"shape": (48, 32)}, 1.0))
+        up, down = patch.patches["0.weight"][0][1].weights[:2]
+        # a PDD head bank carries a reshape
+        reshaped = Adapter(up, down)
+        reshaped.weights = (up, down, None, None, None, [48, 32])
+        patch.patches["0.weight"].append((1.0, reshaped, 1.0, None, None))
+        first.weight_function = [patch]
+        _, _, moved = self.run_both()
+        self.assertEqual(moved, 0)
+        self.assertEqual(first.int8_calls, 0)
+
+    def test_a_changed_patch_table_is_picked_up(self):
+        first = self.model[0]
+        patch = self.low_vram("0.weight", ({"shape": (48, 32)}, 1.0))
+        first.weight_function = [patch]
+        self.run_both()
+        # same LowVramPatch object, new LoRA strength in the model's table
+        _, adapter, *rest = patch.patches["0.weight"][0]
+        patch.patches["0.weight"] = [(2.0, adapter, *rest)]
+        merged, low_rank, _ = self.run_both()
+        self.assertTrue(torch.allclose(merged, low_rank, atol=1e-4), float((merged - low_rank).abs().max()))
+
+    def test_an_offloaded_layer_does_not_keep_its_lora_on_the_gpu(self):
+        from forge_h3.native import lora
+        terms = [(torch.randn(4, 32), torch.randn(8, 4), 1.0)]
+        offloaded = types.SimpleNamespace(forward=lambda x: torch.zeros(x.shape[0], 8),
+                                          weight=types.SimpleNamespace(device=torch.device("meta")))
+        hook = lora.LowRankForward(offloaded)
+        hook.set_terms(("k",), terms)
+        hook.active = True
+        hook(self.x)
+        self.assertEqual(hook._cache, {})
+        resident = types.SimpleNamespace(forward=offloaded.forward, weight=torch.zeros(8, 32))
+        hook = lora.LowRankForward(resident)
+        hook.set_terms(("k",), terms)
+        hook.active = True
+        hook(self.x)
+        self.assertEqual(len(hook._cache), 1)
 
     def test_the_dit_forward_runs_its_loras_as_low_rank_terms(self):
         from test_native import tiny_dit
